@@ -1,0 +1,33 @@
+import psycopg2
+from datetime import datetime, timezone
+from extrair import extrair_mercado
+
+def transformar(bruto):
+    """Seleciona e limpa apenas os campos que interessam."""
+    agora = datetime.now(timezone.utc)
+    return [(
+        m["id"], m["symbol"], m["name"],
+        m["current_price"], m["total_volume"],
+        m["market_cap"], m.get("price_change_percentage_24h"), agora,
+    ) for m in bruto]
+
+def carregar(linhas):
+    """Grava no Postgres com UPSERT (idempotente na mesma coleta)."""
+    conn = psycopg2.connect(
+        host="localhost", port=5433, dbname="criptoflow",
+        user="criptoflow", password="criptoflow",
+    )
+    with conn, conn.cursor() as cur:
+        cur.executemany("""
+            INSERT INTO mercado_bruto
+            (id, simbolo, nome, preco_usd, volume_24h,
+             market_cap, variacao_24h, coletado_em)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (id, coletado_em) DO NOTHING
+        """, linhas)
+    conn.close()
+
+if __name__ == "__main__":
+    bruto = extrair_mercado(n=50)
+    carregar(transformar(bruto))
+    print("CriptoFlow v0: ingestão concluída.")
