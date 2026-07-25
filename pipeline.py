@@ -27,7 +27,26 @@ def carregar(linhas):
         """, linhas)
     conn.close()
 
+def carregar_moedas(bruto):
+    linhas = [(m['id'], m['symbol'], m['name']) for m in bruto]
+
+    conn = psycopg2.connect(
+        host="localhost", port=5433, dbname="criptoflow",
+        user="criptoflow", password="criptoflow",
+    )
+
+    with conn, conn.cursor() as cur:
+            cur.executemany("""
+                INSERT INTO moedas
+                (id, simbolo, nome)
+                VALUES (%s,%s,%s)
+                ON CONFLICT (id) DO NOTHING
+            """, linhas)
+    conn.close()
+
 if __name__ == "__main__":
-    bruto = extrair_mercado(n=50)
+    bruto = extrair_mercado(por_pagina=250)
     carregar(transformar(bruto))
     print("CriptoFlow v0: ingestão concluída.")
+    carregar_moedas(bruto)
+    print("CriptoFlow v0: ingestão de novas moedas concluída.")
