@@ -46,7 +46,8 @@ def carregar_moedas(bruto):
 
 if __name__ == "__main__":
     bruto = extrair_mercado(por_pagina=250)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
     carregar(transformar(bruto))
-    print("CriptoFlow v0: ingestão concluída.")
+    print("CriptoFlow v0: ingestão concluída as {}.".format(now))
     carregar_moedas(bruto)
-    print("CriptoFlow v0: ingestão de novas moedas concluída.")
+    print("CriptoFlow v0: ingestão de novas moedas concluída as {}.".format(now))
