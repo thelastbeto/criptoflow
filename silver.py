@@ -7,7 +7,7 @@ import os
 
 load_dotenv()
 
-MINIO_ENDPOINT = "http://localhost:9100"
+MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9100")
 MINIO_KEY      = os.getenv('MINIO_KEY')
 MINIO_SECRET   = os.getenv('MINIO_SECRET')
 BUCKET         = "criptoflow"
@@ -61,9 +61,13 @@ def gravar_silver(df):
         s3.put_object(Bucket=BUCKET, Key=chave, Body=buffer.getvalue())
         print(f"silver: s3://{BUCKET}/{chave} ({len(grupo)} linhas)")
 
-if __name__ == "__main__":
+
+def executar():
     s3 = cliente_s3()
-    bruto  = ler_bronze(s3)
-    limpo  = transformar_silver(bruto)
-    gravar_silver(limpo)
-    print("Camada silver atualizada.")
+    gravar_silver(transformar_silver(ler_bronze(s3)))
+
+
+if __name__ == "__main__":
+    executar()
+
+
