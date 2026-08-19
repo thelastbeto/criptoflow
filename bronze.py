@@ -9,7 +9,7 @@ import os
 # --- Config do MinIO (porta 9100 = API S3, a que remapeamos) ---
 load_dotenv()
 
-MINIO_ENDPOINT = "http://localhost:9100"
+MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9100")
 MINIO_KEY      = os.getenv('MINIO_KEY')
 MINIO_SECRET   = os.getenv('MINIO_SECRET')
 BUCKET         = "criptoflow"
@@ -51,7 +51,13 @@ def gravar_bronze(bruto, coletado_em):
     s3.put_object(Bucket=BUCKET, Key=chave, Body=buffer.getvalue())
     print(f"Gravado s3://{BUCKET}/{chave} ({len(df)} linhas, {len(df.columns)} colunas)")
 
-if __name__ == "__main__":
+
+def executar():
     agora = datetime.now(timezone.utc)
     bruto = extrair_mercado(total=250)
     gravar_bronze(bruto, agora)
+
+    
+
+if __name__ == '__main__':
+    executar()

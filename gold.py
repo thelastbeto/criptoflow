@@ -6,7 +6,7 @@ import os
 
 load_dotenv()
 
-MINIO_ENDPOINT = "http://localhost:9100"
+MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9100")
 MINIO_KEY      = os.getenv('MINIO_KEY')
 MINIO_SECRET   = os.getenv('MINIO_SECRET')
 BUCKET         = "criptoflow"
@@ -47,11 +47,14 @@ def construir_fct_precos(silver, dim):
     return fct[["moeda_sk", "coletado_em", "preco_usd",
                 "volume_24h", "market_cap", "variacao_24h", "rank"]]
 
-if __name__ == "__main__":
+
+def executar():
     s3 = cliente_s3()
     silver = ler_silver(s3)
     dim = construir_dim_moeda(silver)
     fct = construir_fct_precos(silver, dim)
     gravar_parquet(s3, dim, "gold/dim_moeda/dim_moeda.parquet")
     gravar_parquet(s3, fct, "gold/fct_precos/fct_precos.parquet")
-    print("Camada gold (star schema) atualizada.")
+
+if __name__ == "__main__":
+    executar()

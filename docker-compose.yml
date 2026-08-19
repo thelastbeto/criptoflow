@@ -23,6 +23,19 @@ services:
       - "9101:9001"    
     volumes:
       - miniodata:/data
+  airflow:
+    image: apache/airflow:2.10.5
+    command: standalone
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      MINIO_ENDPOINT: "http://minio:9000"          # endereço "de dentro do prédio"
+      PYTHONPATH: "/opt/airflow/project"           # pra achar bronze.py, silver.py...
+      _PIP_ADDITIONAL_REQUIREMENTS: "boto3 pandas pyarrow==25.0.0 requests"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./:/opt/airflow/project  
 
 volumes:
   pgdata:
