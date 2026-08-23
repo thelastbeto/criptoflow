@@ -1,10 +1,9 @@
 from datetime import datetime
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
 
 from bronze import executar as executar_bronze
-from silver import executar as executar_silver
-from gold   import executar as executar_gold
 
 with DAG(
     dag_id="criptoflow_medallion",
@@ -14,10 +13,20 @@ with DAG(
     tags=["criptoflow"],
 ) as dag:
 
-    t_bronze = PythonOperator(task_id="bronze", python_callable=executar_bronze)
-    t_silver = PythonOperator(task_id="silver", python_callable=executar_silver)
-    t_gold   = PythonOperator(task_id="gold",   python_callable=executar_gold)
+    t_bronze = PythonOperator(
+        task_id="bronze",
+        python_callable=executar_bronze,          # ingestão: CoinGecko -> MinIO
+    )
 
-    t_bronze >> t_silver >> t_gold   # a ordem/dependência
+    t_dbt = BashOperator(
+        task_id="dbt_build",
+        bash_command=(
+            "dbt build "
+            "--project-dir /opt/airflow/project/criptoflow_dbt "
+            "--profiles-dir /home/airflow/.dbt"
+        ),                                         # transformação: staging + marts + testes
+    )
+
+    t_bronze >> t_dbt
 
     
