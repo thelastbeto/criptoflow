@@ -1,0 +1,17 @@
+version: 2
+models:
+  - name: dim_moeda
+    columns:
+      - name: moeda_sk
+        tests: [unique, not_null]
+      - name: id
+        tests: [unique, not_null]
+  - name: fct_precos
+    columns:
+      - name: moeda_sk
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_moeda')
+                field: moeda_sk
