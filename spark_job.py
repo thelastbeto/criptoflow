@@ -1,0 +1,29 @@
+from pyspark.sql import SparkSession, functions as f
+
+HADOOP_VER = "3.5.0"
+
+spark = SparkSession\
+    .builder\
+    .appName("criptoflow-spark")\
+    .master("local[*]")\
+    .config("spark.jars.packages", f"org.apache.hadoop:hadoop-aws:{HADOOP_VER}")\
+    .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:9100")\
+    .config("spark.hadoop.fs.s3a.access.key", "criptoflow")\
+    .config("spark.hadoop.fs.s3a.secret.key", "criptoflow123")\
+    .config("spark.hadoop.fs.s3a.path.style.access", "true")\
+    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")\
+    .getOrCreate()
+
+
+df = spark.read.parquet("s3a://criptoflow/bronze/mercado/")
+
+print("Linhas na bronze:", df.count())
+print("Partições:", df.rdd.getNumPartitions())
+df.printSchema()
+
+(df.groupBy("id")
+   .agg(f.avg("current_price").alias("preco_medio"), f.count("*").alias("amostras"))
+   .orderBy(f.desc("amostras"))
+   .show(10))
+
+spark.stop()
