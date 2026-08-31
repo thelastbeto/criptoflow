@@ -212,3 +212,394 @@ _(nenhum registrado — deu tudo certo)_
 - **Branch deletada continua aparecendo no `git branch -a`:** falta rodar `git fetch --prune`.
 - **Commits exclusivos na branch a apagar:** se `git log main..origin/master` retornar commits, faça
   o merge para a `main` antes de deletar (`git merge origin/master`), para não perder trabalho.
+
+---
+
+## Parte II · Passo 1 — MinIO sobe mas o navegador/Python não acessa (portas não publicadas)
+
+> **Resumo em uma linha:** o MinIO está "Up", mas `localhost:9001` não abre e o Python não conecta —
+> porque as portas não foram publicadas no host. No Windows, isso quase sempre é faixa de porta
+> reservada. **Solução rápida: use outra porta (91xx).**
+
+### Como reconhecer (sintomas)
+- No navegador, `http://localhost:9001` dá `ERR_INVALID_HTTP_RESPONSE` ou não carrega.
+- `docker compose ps` mostra, na coluna PORTS do minio, `9000-9001/tcp` — **sem** o `0.0.0.0:...->...`
+  que o postgres tem.
+- Os containers estão rodando normalmente ("Up"), então não parece que quebrou nada.
+
+### Solução rápida (se você só quer destravar)
+Troque as portas do MinIO no `docker-compose.yml` por portas altas e livres:
+```yaml
+    ports:
+      - "9100:9000"   # API S3 (é a que o Python usa)
+      - "9101:9001"   # Console web (navegador)
+```
+**Salve o arquivo** (o Docker lê do disco, não do editor), recrie e valide:
+```bash
+docker compose up -d --force-recreate minio
+docker port criptoflow-minio-1                          # deve listar 9000->9100 e 9001->9101
+curl -I http://localhost:9100/minio/health/live         # deve responder "HTTP/1.1 200 OK"
+```
+Console passa a ser `http://localhost:9101`. Resolveu? Ótimo, siga a vida. Quer entender *por quê*? Continue.
+
+### Diagnóstico passo a passo (árvore de decisão)
+Rode os comandos **em ordem** e siga a seta conforme o resultado:
+
+1. `docker compose config` → procure o bloco `minio: ports:`.
+   - **Não aparecem as portas?** → o arquivo em disco está errado/não salvo. Corrija o YAML, salve, e recomece.
+   - **Aparecem?** → a config está certa; o problema é o container. Vá ao passo 2.
+
+2. `docker port criptoflow-minio-1` → lista o mapeamento real do container.
+   - **Mostra `9000/tcp -> 0.0.0.0:9000`?** → está publicado! O problema é outro (ex.: firewall, navegador). Teste com `curl`.
+   - **Vem vazio?** → o container não pegou as portas. Vá ao passo 3.
+
+3. `docker compose rm -sf minio && docker compose up -d minio` → recria o container do zero (mantém os
+   dados do volume). Rode `docker port` de novo.
+   - **Agora publicou?** → era container defasado. Resolvido.
+   - **Continua vazio, sem nenhum erro?** → é o caso da causa abaixo. Aplique a Solução rápida (troque a porta).
+
+### Por que acontece (a causa)
+Não é culpa sua nem do seu código. O Windows, às vezes, "tranca" faixas inteiras de portas para uso
+interno (o sistema por trás do WSL2 e do Docker Desktop reserva essas faixas). A faixa dos 9000 costuma
+cair numa dessas. Quando a porta está trancada, o Docker Desktop **não consegue publicá-la e, pior, não
+avisa com erro** — ele só sobe o container sem a porta. Por isso o sintoma é tão confuso.
+
+**Confirmar (opcional), no PowerShell** (não no WSL):
+```powershell
+netsh int ipv4 show excludedportrange protocol=tcp
+```
+Se 9000/9001 estiverem dentro de alguma faixa listada, é exatamente isso.
+
+### Verificação final (como saber que consertou)
+- `docker port criptoflow-minio-1` lista as duas portas mapeadas.
+- `curl -I http://localhost:9100/minio/health/live` retorna `HTTP/1.1 200 OK`.
+- `http://localhost:9101` abre o console do MinIO no navegador.
+
+### Lições que ficam
+- **EXPOSE ≠ publish:** `9000/tcp` é alcançável só dentro da rede Docker; `0.0.0.0:9000->9000` é
+  mapeada pro host (o que o `ports:` faz).
+- **Desejado ≠ real:** `docker compose config` mostra o que o compose QUER; `docker port`/`docker inspect`
+  mostram o que o container TEM. Divergiu? Recrie com `rm -sf` + `up`, não só `restart`.
+- **Docker lê do disco:** edição não salva no editor não existe pro Docker.
+- **No Windows, publish falhar sem conflito de container = suspeite de porta reservada.** Não brigue:
+  troque a porta.
+
+---
+
+## Git — trabalho "sumiu" ao trocar de branch (PR nunca foi mergeado)
+
+> **Resumo em uma linha:** você fez o `push` da branch mas nunca criou/mergeou o PR; ao voltar pra
+> `main`, o arquivo "desaparece" da pasta. Nada foi perdido — está na branch remota.
+> **Solução rápida: crie e mergeie o PR no GitHub, depois `git pull`.**
+
+### Como reconhecer (sintomas)
+- `git pull` na `main` diz "Already up to date" mesmo depois de você achar que "subiu" o trabalho.
+- `git log --oneline` da `main` **não mostra** o commit da etapa.
+- `ls arquivo.py` → "No such file or directory" (sumiu da pasta ao trocar de branch).
+- `git branch -a` ainda mostra `remotes/origin/feat/...` (o trabalho está lá, salvo).
+- `git branch -d` avisou: *"merged to refs/remotes/origin/... but not yet merged to HEAD"*.
+
+### Solução rápida
+1. GitHub → aba **Pull requests** → **New pull request** (base = `main`, compare = `feat/...`).
+2. Revisar o diff → **Merge pull request** → **Confirm merge** → (opcional) **Delete branch**.
+3. No terminal: `git checkout main` → `git pull origin main` (o arquivo reaparece) → `git fetch --prune`.
+
+### Árvore de decisão
+- `git log` da `main` mostra o commit? **Sim** → está tudo certo, era só o warning. **Não** → siga.
+- Aba Pull requests: **existe PR?**
+  - **Não existe** → crie o PR e mergeie.
+  - **Open** → mergeie.
+  - **Merged**, mas a `main` local não tem → só falta `git pull origin main`.
+
+### Por que acontece
+`push` apenas copia a branch pro GitHub; o **merge** é um passo separado que integra na `main`. E o
+`git branch -d` aceita apagar uma branch se ela bate com a **cópia remota** dela (upstream), mesmo sem
+estar na `main` — por isso o warning "not yet merged to HEAD". Branch é uma cópia paralela do projeto:
+ao trocar de branch, os arquivos visíveis mudam pra refletir aquela versão (nada se perde).
+
+### Verificação final
+- `git log --oneline -5` da `main` mostra o commit da etapa.
+- `ls arquivo.py` → o arquivo está de volta.
+- `git branch -a` (após `--prune`) mostra só a `main`.
+
+### Lições que ficam
+- **Pushed ≠ merged.** Enviar a branch não a integra na main; o merge é o clique separado.
+- **Branch é cópia paralela**; trocar de branch troca os arquivos visíveis — não apaga nada.
+- **Sempre confirme o merge antes de limpar** a branch (`git log` da main / aba Pull requests).
+
+---
+
+## Parte II · Passo 5 — DuckDB não conecta no MinIO (`Could not resolve hostname`)
+
+> **Resumo em uma linha:** o `s3_endpoint` estava com `http://` e/ou na porta errada. Deve ser só
+> `host:porta`, sem esquema, e na porta da **API S3 (9100)**, não a do console (9101).
+
+### Como reconhecer (sintomas)
+- `IOException: Could not resolve hostname error for HTTP HEAD to '...'`.
+- A URL no erro mostra o esquema **dobrado** e/ou a porta do console: `http://http://...localhost%3A9101...`
+  (o `%3A` é só o `:` codificado).
+
+### Solução rápida
+Na config do DuckDB, deixe o endpoint como `host:porta`, sem `http://`, na porta da API:
+```python
+con.execute("SET s3_endpoint='localhost:9100';")   # sem esquema; 9100 = API S3
+```
+
+### Árvore de decisão
+- URL do erro tem `http://http://`? → você pôs `http://` no endpoint. **Tire** — o DuckDB adiciona o esquema sozinho.
+- A porta é `9101`? → é a do **console** (navegador). Troque pra **`9100`** (API S3, por onde o código lê).
+- Ainda falha? → confira `SET s3_use_ssl=false;` e `SET s3_url_style='path';` (MinIO local é http e path-style).
+
+### Verificação final
+- A query retorna os dados (ex.: as top 10 moedas) sem erro.
+
+### Lições que ficam
+- **Endpoint = `host:porta`** — o DuckDB (e a maioria dos clients S3) adiciona o esquema sozinho a
+  partir do `s3_use_ssl`. Colocar `http://` no valor gera esquema dobrado.
+- **9100 = API S3 (código); 9101 = console (navegador).** Ler/gravar dado vai pela API.
+- **Leia a URL que o erro mostra** — ela entrega o problema (esquema dobrado + porta errada) de bandeja.
+
+---
+
+## Parte II · Passo 6 — pyarrow: `Repetition level histogram size mismatch` ao ler Parquet
+
+> **Resumo:** versões diferentes de pyarrow no host e no container escreveram/leram o mesmo Parquet, e
+> os metadados não bateram. **Solução rápida: pine a mesma versão nos dois e regenere os dados.**
+
+### Como reconhecer (sintomas)
+- `OSError: Repetition level histogram size mismatch` dentro de `pd.read_parquet`.
+- O script **funciona no host** mas **quebra no container** (ou o contrário) — sinal de versões diferentes.
+
+### Solução rápida
+1. Confirme as versões: host → `python3 -c "import pyarrow; print(pyarrow.__version__)"`; container →
+   `docker compose exec airflow python -c "import pyarrow; print(pyarrow.__version__)"`.
+2. Pine a **mesma** versão nos dois: no `_PIP_ADDITIONAL_REQUIREMENTS` use `pyarrow==X.Y.Z` (a do host).
+3. `docker compose up -d --force-recreate airflow`.
+4. Apague as pastas `bronze/`, `silver/`, `gold/` no MinIO (dado escrito pela versão antiga) e reprocesse o DAG.
+
+### Por que acontece
+Os metadados do Parquet (ex.: o "repetition level histogram") não são 100% compatíveis entre versões do
+pyarrow. A versão **leitora** não entendeu o que a **escritora** gravou. `_PIP_ADDITIONAL_REQUIREMENTS`
+sem versão instala sempre a mais recente → diverge do host.
+
+### Verificação final
+- As versões (host e container) batem, e a DAG roda verde.
+
+### Lições que ficam
+- **Pine versões de dependências** — reprodutibilidade. Dependência sem versão fixa é bug esperando.
+- Ambientes diferentes (host vs. container) instalam versões diferentes se você não fixar.
+
+---
+
+## Airflow — `Bad Request: The CSRF session token is missing` no login
+
+> **Resumo:** cookie de sessão velho após recriar o container.
+> **Solução rápida: aba anônima ou limpar cookies de `localhost:8080`.**
+
+### Como reconhecer
+- Tela "Bad Request — The CSRF session token is missing" ao logar, logo após um `--force-recreate` do Airflow.
+
+### Solução rápida
+1. Abra uma **aba anônima** (ou limpe os cookies de `localhost:8080`).
+2. Pegue a senha nova (o standalone regenera a cada recriação):
+   `docker compose exec airflow cat /opt/airflow/standalone_admin_password.txt`.
+3. Logue com `admin` + a senha.
+
+### Por que acontece
+Recriar o container gera uma **chave secreta de sessão nova**; o cookie antigo do navegador fica inválido
+→ o servidor não encontra um token CSRF válido. (Com metadados efêmeros, a senha de admin também muda a
+cada recriação.)
+
+### Lições que ficam
+- Recriou o Airflow? Espere **senha nova** e **cookie velho inválido** — limpe o navegador.
+
+---
+
+## dbt docs serve — porta em uso + navegador não abre no WSL
+
+> **Resumo:** o `dbt docs serve` tenta subir na porta **8080** (ocupada pelo Airflow) e tenta abrir um
+> navegador que não existe no WSL. **Solução rápida: `--port 8081` e abrir a URL manualmente no Windows.**
+
+### Como reconhecer
+- `[Errno 98] Address already in use` ao rodar `dbt docs serve`.
+- Vários `xdg-open: ... not found` / `no method available for opening 'http://localhost:8080'`.
+
+### Solução rápida
+```bash
+dbt docs serve --port 8081
+```
+Depois abrir `http://localhost:8081` **no navegador do Windows** (o dbt não consegue abrir sozinho no WSL).
+
+### Por que acontece
+- **Porta em uso:** o Airflow já está na 8080; o `dbt docs serve` usa 8080 por padrão. Dois serviços,
+  uma porta → conflito.
+- **`xdg-open` sem navegador:** o WSL é um Linux sem navegador instalado, então nenhuma ferramenta Linux
+  consegue "abrir o navegador" sozinha. Você abre a URL na mão, no Windows.
+
+### Lições que ficam
+- Conflito de porta = **escolha outra** (`--port`). Padrão que se repete (Postgres, MinIO, Airflow, dbt).
+- Ferramentas Linux no WSL **não abrem navegador** — abra a URL manualmente no Windows.
+- `dbt docs serve` **trava o terminal** (é um servidor em primeiro plano); saia com `Ctrl+C`.
+
+---
+
+## YAML — erros de indentação (hierarquia por espaços)
+
+> **Resumo:** em YAML, **indentação é hierarquia**. Uma chave que vira "irmã" quando deveria ser "filha"
+> (ou o contrário) quebra o parse. **Regra: cada nível de pertencimento = +2 espaços à direita; nunca Tab.**
+
+### Como reconhecer (sintomas variam por ferramenta)
+- Docker Compose: `services.volumes additional properties 'pgdata' not allowed`.
+- dbt: `test definition dictionary must have exactly one key, got [... ] instead (2 keys)`.
+- Em geral: erros de "propriedade não permitida", "chave duplicada", "esperava X e achou Y".
+
+### A regra
+- O que **pertence** a algo fica **recuado à direita** dele. Cada nível = **+2 espaços**. **Nunca use Tab**
+  (YAML rejeita). No VS Code, a extensão de YAML aponta o erro na hora.
+
+### Casos reais enfrentados
+- **docker-compose:** o `volumes:` de nível raiz ficou indentado **dentro** de `services:` → virou
+  propriedade de um serviço. Correção: `volumes:` na margem, **irmão** de `services:`.
+- **dbt `schema.yml`:** o `arguments:` ficou no **mesmo nível** de `relationships:` (dois irmãos) →
+  "2 keys". Correção: `arguments:` **dentro** de `relationships:` (+2 espaços), e `to`/`field` dentro de
+  `arguments:`.
+
+### Lições que ficam
+- **Indentação = hierarquia.** Antes de mexer no valor, confira o **recuo**.
+- **2 espaços por nível, nunca Tab.**
+- **Leia o erro:** ele quase sempre diz *qual chave* está no lugar errado.
+
+---
+
+## Airflow demora a subir após `--force-recreate` (não é queda, é boot)
+
+> **Resumo:** depois de recriar o container, o Airflow **reinstala as libs** do `_PIP_ADDITIONAL_REQUIREMENTS`
+> (dbt-duckdb, pandas, pyarrow) e leva **minutos** pra subir. O `8080` fica fora do ar até terminar.
+> **Solução rápida: esperar e confirmar a prontidão no log, não no navegador.**
+
+### Como reconhecer
+- `localhost:8080` dá `ERR_CONNECTION_RESET` / não carrega **logo após** um `docker compose up -d --force-recreate airflow`.
+- O `docker compose ps` mostra o airflow como **`running`** (o container está de pé, mas o webserver ainda não).
+
+### Solução rápida
+```bash
+docker compose logs airflow | grep -i "Airflow is ready"
+```
+- **Não apareceu ainda?** → ele ainda está instalando/subindo. Espere 2-3 min e rode de novo.
+- **Apareceu?** → acesse o `8080` (senha nova: `docker compose exec airflow cat /opt/airflow/standalone_admin_password.txt`; use aba anônima pro CSRF).
+
+### Por que acontece
+O `_PIP_ADDITIONAL_REQUIREMENTS` **reinstala tudo a cada recriação** (é uma conveniência de desenvolvimento).
+O webserver só sobe **depois** de instalar. Container `running` ≠ serviço `ready`.
+
+### Solução definitiva (quando quiser robustez)
+Assar as libs numa **imagem própria** (Dockerfile a partir do `apache/airflow`, com `pip install` no build)
+em vez de reinstalar em runtime. Sobe em segundos e não reinstala nada.
+
+### Lições que ficam
+- **Container "running" ≠ serviço "ready".** Confirme a prontidão no **log** (`Airflow is ready`), não no navegador.
+- Setup de dev (reinstalar em runtime) é frágil; produção usa imagem própria com deps já embutidas.
+
+---
+
+## Kafka (KRaft) — container sobe e morre: `advertised.listeners cannot use 0.0.0.0`
+
+> **Resumo:** o container do Kafka morre no boot porque a validação recusa `0.0.0.0` como endereço
+> anunciado. **Solução rápida: advertised = `localhost` (roteável); bindar o CONTROLLER em `localhost`.**
+
+### Como reconhecer
+- `docker compose ps -a` mostra o `kafka` como `Exited`.
+- `docker compose logs kafka` termina com
+  `IllegalArgumentException: ... advertised.listeners cannot use the nonroutable meta-address 0.0.0.0`.
+
+### Conceito por trás
+- `listeners` = onde o broker **binda/escuta** (`0.0.0.0` = todas as interfaces, **válido**).
+- `advertised.listeners` = o endereço que o broker **anuncia** aos clientes (**tem que ser roteável**;
+  `0.0.0.0` é recusado — não é um destino real que um cliente possa discar).
+
+### Solução
+```yaml
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://localhost:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+```
+- Broker (PLAINTEXT) em `0.0.0.0` → pro Docker encaminhar a porta do host.
+- Controller em `localhost` → só conversa internamente (bate com o quorum voter) e some o `0.0.0.0`
+  que a validação rejeitava.
+- Recriar: `docker compose up -d --force-recreate kafka` → conferir `Kafka Server started`.
+
+### Lições que ficam
+- **listeners (bind) ≠ advertised (anúncio).** `0.0.0.0` vale pra bind, não pra advertised.
+- O **broker** precisa bindar `0.0.0.0` (pro Docker encaminhar); o **controller** só fala interno → `localhost`.
+- Container que sobe e morre → `docker compose ps -a` + `docker compose logs`, não o output do `up`.
+
+---
+
+## Kafka — dados são efêmeros sem volume nomeado
+
+> **Resumo:** sem um volume nomeado, o log do Kafka vive na camada gravável do container → **some** num
+> `docker compose down`/recriação. Os eventos e offsets se perdem.
+
+### Como reconhecer
+- Depois de recriar/derrubar o container do Kafka, os eventos "sumiram"; um consumer com
+  `auto_offset_reset="earliest"` relê a partir do vazio (o que havia antes se foi).
+
+### Por que acontece
+- O diretório de log (`log.dirs`) fica na **camada do container**, não persistido. Igual ao metadado
+  efêmero do Airflow.
+
+### Solução (quando quiser persistência)
+- Fixar o log dir e montar um **volume nomeado**:
+  ```yaml
+  environment:
+    KAFKA_LOG_DIRS: /var/lib/kafka/data
+  volumes:
+    - kafkadata:/var/lib/kafka/data
+  ```
+  e declarar `kafkadata:` no bloco `volumes:` do topo.
+
+### Nota de arquitetura
+- No CriptoFlow, deixamos o Kafka **efêmero de propósito**: o destino durável é a **bronze** (lake); o
+  Kafka é só um **buffer transitório**. Persistir o Kafka faz sentido quando ele é a fonte da verdade.
+
+### Lição que fica
+- **Sem volume nomeado = dado efêmero.** Vale pra Kafka, metadado do Airflow, e qualquer container.
+
+---
+
+## Produtor Kafka morre com `429 Too Many Requests` da API
+
+> **Resumo:** o produtor (serviço de longa duração) morria no **primeiro 429** porque o
+> `raise_for_status()` levantava a exceção sem tratamento. **Solução: `try/except` dentro do loop +
+> backoff no 429 + `continue`.**
+
+### Como reconhecer
+- Traceback com `requests.exceptions.HTTPError: 429 Client Error: Too Many Requests` e o produtor **para**.
+
+### Por que acontece
+- Chamada à API sem tratamento **dentro de um loop de longa duração**: qualquer 429/erro transitório
+  derruba o serviço inteiro. Um serviço de streaming não pode morrer assim.
+
+### Solução
+1. **Espaçar** as chamadas (aumentar o `time.sleep`) para reduzir a frequência.
+2. **Blindar o loop:**
+   ```python
+   while True:
+       try:
+           r = requests.get(...)
+           if r.status_code == 429:
+               time.sleep(60)      # backoff maior no rate limit
+               continue
+           r.raise_for_status()
+           # ... publica ...
+       except requests.RequestException as e:
+           print(f"erro transitorio: {e} — continuando")
+       time.sleep(20)
+   ```
+
+### Nota de arquitetura
+- A CoinGecko **não é streaming real** (é polling com rate limit). Rode em **rajadas**, não 24/7 (teto
+  mensal do plano grátis ~10k chamadas). Streaming de verdade seria um WebSocket de corretora.
+
+### Lições que ficam
+- **Serviço de streaming não pode morrer em erro transitório** — `try/except` específico dentro do loop, log + `continue`.
+- **429 pede backoff maior** que um erro comum.
