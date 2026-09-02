@@ -1,0 +1,6 @@
+criptoflow_dbt:
+  target: ci
+  outputs:
+    ci:
+      type: duckdb
+      path: /tmp/ci.duckdb

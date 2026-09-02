@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main] # Dispara automaticamente a cada PR para a main (Gatilho)
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest # Github sobe uma máquina linux limpa e descartável para rodar o PR.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install dbt-duckdb requests boto3 pandas pyarrow
+
+      - name: Checar sintaxe dos scripts Python
+        run: python -m py_compile bronze.py produtor.py consumidor.py spark_job.py spark_streaming.py consultar.py dags/criptoflow_dag.py
+
+      - name: Validar o projeto dbt (parse)
+        working-directory: criptoflow_dbt
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/.github/dbt
+        run: dbt parse # Montagem do manifest e validação dos modelos e ref() > Ordem do DAG. Usa o profile de CI(DBT_PROFILES_DIR apontando para .github/dbt), com um DuckDB temporário - sem tocar no MinIO
+        
