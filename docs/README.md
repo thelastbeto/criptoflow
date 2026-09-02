@@ -40,7 +40,7 @@ O dado cru é guardado primeiro (**ELT**) e refinado em camadas **Medallion** (b
 
 | Camada | Ferramenta | Por quê |
 |---|---|---|
-| Linguagem | Python + SQL | Iniciando com o ciclo básico. Muitos problemas são solucionados com ambas |
+| Linguagem | Python + SQL | Iniciando com o ciclo básico. Muitos problemas são solucionados com ambas|
 | Containers | Docker Compose | Ambiente reproduzível em qualquer máquina |
 | Object storage | MinIO (compatível com S3) | Armazenar dado cru barato; espelha o S3 real |
 | Formato | Apache Parquet | Colunar e comprimido — padrão em analytics |
