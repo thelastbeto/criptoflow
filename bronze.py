@@ -3,15 +3,13 @@ from datetime import datetime, timezone
 import boto3
 import pandas as pd
 from extrair import extrair_mercado
-from dotenv import load_dotenv
-import os
+from credentials import key_or_pass
 
 # --- Config do MinIO (porta 9100 = API S3, a que remapeamos) ---
-load_dotenv()
 
-MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9100")
-MINIO_KEY      = os.getenv('MINIO_KEY')
-MINIO_SECRET   = os.getenv('MINIO_SECRET')
+MINIO_ENDPOINT = "http://localhost:9100"
+MINIO_KEY      = key_or_pass('key')
+MINIO_SECRET   = key_or_pass('password')
 BUCKET         = "criptoflow"
 
 def cliente_s3():

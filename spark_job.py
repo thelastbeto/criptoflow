@@ -1,4 +1,5 @@
 from pyspark.sql import SparkSession, functions as f
+from credentials import key_or_pass
 
 HADOOP_VER = "3.5.0"
 
@@ -8,8 +9,8 @@ spark = SparkSession\
     .master("local[*]")\
     .config("spark.jars.packages", f"org.apache.hadoop:hadoop-aws:{HADOOP_VER}")\
     .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:9100")\
-    .config("spark.hadoop.fs.s3a.access.key", "criptoflow")\
-    .config("spark.hadoop.fs.s3a.secret.key", "criptoflow123")\
+    .config("spark.hadoop.fs.s3a.access.key", key_or_pass('key'))\
+    .config("spark.hadoop.fs.s3a.secret.key", key_or_pass('password'))\
     .config("spark.hadoop.fs.s3a.path.style.access", "true")\
     .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")\
     .getOrCreate()
