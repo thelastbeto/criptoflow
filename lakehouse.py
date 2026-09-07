@@ -1,11 +1,11 @@
 import pandas as pd
 from deltalake import write_deltalake, DeltaTable
-from credentials import key_or_pass
+from credentials import Credentials
 
 storage_options = {
-    "AWS_ENDPOINT_URL": "http://localhost:9100",
-    "AWS_ACCESS_KEY_ID": key_or_pass('key'),
-    "AWS_SECRET_ACCESS_KEY": key_or_pass('password'),
+    "AWS_ENDPOINT_URL": Credentials.endpoints()['minio'],
+    "AWS_ACCESS_KEY_ID": Credentials.minio()['key'],
+    "AWS_SECRET_ACCESS_KEY": Credentials.minio()['secret'],
     "AWS_ALLOW_HTTP": "true",
     "AWS_S3_ALLOW_UNSAFE_RENAME": "true",   # S3/MinIO não tem rename atômico; ok pra 1 escritor
     "AWS_REGION": "us-east-1",
