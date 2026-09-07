@@ -1,18 +1,18 @@
 import io
 import boto3
 import pandas as pd
-from credentials import key_or_pass
+from credentials import Credentials
 
 # --- Config do MinIO (porta 9100 = API S3, a que remapeamos) ---
-
-MINIO_ENDPOINT = "http://localhost:9100"
-MINIO_KEY      = key_or_pass('key')
-MINIO_SECRET   = key_or_pass('password')
 BUCKET         = "criptoflow"
 
 def cliente_s3():
-    return boto3.client("s3", endpoint_url=MINIO_ENDPOINT,
-                        aws_access_key_id=MINIO_KEY, aws_secret_access_key=MINIO_SECRET)
+    return boto3.client(
+        "s3",
+        endpoint_url=Credentials.endpoints()['minio'],
+        aws_access_key_id=Credentials.minio()['key'],
+        aws_secret_access_key=Credentials.minio()['secret'],
+    )
 
 def ler_silver(s3):
     resp = s3.list_objects_v2(Bucket=BUCKET, Prefix="silver/mercado/")

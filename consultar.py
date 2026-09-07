@@ -1,18 +1,18 @@
 import os
 import duckdb
-from credentials import key_or_pass
+from credentials import Credentials
 
 # --- Config do MinIO (porta 9100 = API S3, a que remapeamos) ---
 
-
-MINIO_KEY      = key_or_pass('key')
-MINIO_SECRET   = key_or_pass('password')
+MINIO_ENDPOINT = Credentials.endpoints()['minio']
+MINIO_KEY      = Credentials.minio()['key']
+MINIO_SECRET   = Credentials.minio()['secret']
 
 
 con = duckdb.connect()
 
 con.execute('INSTALL httpfs; LOAD httpfs;')
-con.execute(f"SET s3_endpoint='localhost:9100';")
+con.execute(f"SET s3_endpoint={MINIO_ENDPOINT};")
 con.execute(f"SET s3_access_key_id={MINIO_KEY};")
 con.execute(f"SET s3_secret_access_key={MINIO_SECRET};")
 con.execute("SET s3_use_ssl=false;")

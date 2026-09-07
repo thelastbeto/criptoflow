@@ -3,23 +3,22 @@ import os
 
 load_dotenv()
 
-def key_or_pass(att:str) -> str:
+class Credentials:
+    @staticmethod
+    def endpoints() -> dict:
+        
+        return {
+            "minio": os.getenv("MINIO_ENDPOINT", "http://localhost:9100"),
+            "kafka": os.getenv("KAFKA_BOOTSTRAP", "localhost:9092"),
+        }
 
-    minio= {
-        'key':os.getenv('MINIO_KEY'),
-        'password':os.getenv('MINIO_SECRET')
-    }
+    @staticmethod
+    def minio() -> dict:
+        key = os.getenv("MINIO_KEY")
+        secret = os.getenv("MINIO_SECRET")
 
-    chave = att.lower()
-
-    if chave not in minio:
-        raise ValueError(f"Atributo inválido: {att}. Use 'key' ou 'password'.")
-
-    valor = minio[chave]
-
-    if valor is None:                       
-        raise ValueError(f"'{att}' ausente no .env.")
-    
-    return valor
+        if not key or not secret:    
+            raise ValueError("MINIO_KEY/MINIO_SECRET ausentes no .env.")
+        return {"key": key, "secret": secret}
 
     

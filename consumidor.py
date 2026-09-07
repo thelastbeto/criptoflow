@@ -3,16 +3,12 @@ from datetime import datetime, timezone
 import boto3
 import pandas as pd
 from kafka import KafkaConsumer
-from credentials import key_or_pass
-
-
-MINIO_ENDPOINT = "http://localhost:9100"
-BUCKET = "criptoflow"
+from credentials import Credentials
 
 s3 = boto3.client("s3", 
-                  endpoint_url=MINIO_ENDPOINT,
-                  aws_access_key_id=key_or_pass('key'), 
-                  aws_secret_access_key=key_or_pass('password'),
+                  endpoint_url=Credentials.endpoints()['minio'],
+                  aws_access_key_id=Credentials.minio()['key'], 
+                  aws_secret_access_key=Credentials.minio()['secret'],
                   )
 
 consumer = KafkaConsumer(

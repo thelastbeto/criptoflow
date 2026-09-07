@@ -2,13 +2,9 @@ import io
 import boto3
 import pandas as pd
 from extrair import extrair_mercado
-from credentials import key_or_pass
+from credentials import Credentials
 
 # --- Config do MinIO (porta 9100 = API S3, a que remapeamos) ---
-
-MINIO_ENDPOINT = "http://localhost:9100"
-MINIO_KEY      = key_or_pass('key')
-MINIO_SECRET   = key_or_pass('password')
 BUCKET         = "criptoflow"
 
 # Mapa: coluna da bronze (fonte) -> coluna padronizada da silver
@@ -20,10 +16,12 @@ COLUNAS = {
 }
 
 def cliente_s3():
-    return boto3.client("s3", 
-                        endpoint_url=MINIO_ENDPOINT,
-                        aws_access_key_id=MINIO_KEY, 
-                        aws_secret_access_key=MINIO_SECRET)
+    return boto3.client(
+        "s3",
+        endpoint_url=Credentials.endpoints()['minio'],
+        aws_access_key_id=Credentials.minio()['key'],
+        aws_secret_access_key=Credentials.minio()['secret'],
+    )
 
 def ler_bronze(s3):
     """Fan-in: lê TODOS os Parquet da bronze e junta num só DataFrame."""
