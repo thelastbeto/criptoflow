@@ -1,13 +1,12 @@
 import os
 import duckdb
-from dotenv import load_dotenv
+from credentials import key_or_pass
 
 # --- Config do MinIO (porta 9100 = API S3, a que remapeamos) ---
-load_dotenv()
 
-MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT')
-MINIO_KEY      = os.getenv('MINIO_KEY')
-MINIO_SECRET   = os.getenv('MINIO_SECRET')
+
+MINIO_KEY      = key_or_pass('key')
+MINIO_SECRET   = key_or_pass('password')
 
 
 con = duckdb.connect()
