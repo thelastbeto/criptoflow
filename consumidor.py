@@ -5,11 +5,14 @@ import pandas as pd
 from kafka import KafkaConsumer
 from credentials import Credentials
 
+BUCKET = 'criptoflow'
+
 s3 = boto3.client("s3", 
                   endpoint_url=Credentials.endpoints()['minio'],
                   aws_access_key_id=Credentials.minio()['key'], 
                   aws_secret_access_key=Credentials.minio()['secret'],
                   )
+
 
 consumer = KafkaConsumer(
     "precos-cripto",
