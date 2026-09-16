@@ -6,7 +6,7 @@
 > **Formato de cada entrada:** Sintoma (mensagem) → Causa → Correção → Lição.
 >
 > Ambiente de referência: Windows + WSL2 (Ubuntu), Docker Desktop, Python 3.x, Postgres 16.
-> Última atualização: 2026-07-23.
+> Última atualização: 2026-09-16.
 
 ---
 
@@ -603,3 +603,156 @@ em vez de reinstalar em runtime. Sobe em segundos e não reinstala nada.
 ### Lições que ficam
 - **Serviço de streaming não pode morrer em erro transitório** — `try/except` específico dentro do loop, log + `continue`.
 - **429 pede backoff maior** que um erro comum.
+
+---
+
+## Git — `main` local divergiu da `origin` ("divergent branches")
+
+> **Resumo:** a `main` local e a `origin/main` têm commits diferentes → o `git pull` para e pede pra
+> escolher merge ou rebase. Quase sempre causado por um commit feito **direto na `main`**.
+> **Solução rápida (se a main local não tem trabalho único): `git reset --hard origin/main`.**
+
+### Como reconhecer
+- `git pull` → `You have divergent branches and need to specify how to reconcile them`.
+- `git status` → `Your branch and 'origin/main' have diverged, and have X and Y different commits`.
+
+### Diagnóstico (provar antes de agir)
+```bash
+git log --oneline origin/main..main    # commits SÓ na sua main local
+git log --oneline main..origin/main     # commits SÓ na main do GitHub
+```
+- Se o commit local **já existe no remoto** (mesma mudança, outro SHA — ex.: você commitou direto na
+  main *e* pela branch/PR), é **duplicata** → seguro descartar.
+
+### Solução
+```bash
+git status                     # confirme working tree clean
+git reset --hard origin/main   # alinha a local com o remoto (fonte da verdade)
+```
+⚠ O `--hard` **descarta** commits/mudanças locais não presentes no remoto — só use após o diagnóstico confirmar que não há nada único a salvar.
+
+### Prevenção
+- `git config --global pull.ff only` → o `pull` só avança em linha reta; avisa **na hora** se divergir.
+- **Nunca commite direto na `main`** — sempre numa branch. A `main` só recebe via PR/merge.
+
+### Lição que fica
+- Commit direto na `main` (em vez de branch) é a causa nº 1 de divergência. `main` = espelho do remoto.
+
+---
+
+## Helper de config: validação que não valida + falha silenciosa
+
+> **Resumo:** um helper que lê segredos do `.env` tinha dois bugs — a validação **nunca disparava**, e um
+> atributo inválido retornava `{}` **em silêncio** (em vez de erro claro).
+
+### Como reconhecer
+- Passar um atributo errado **não dá erro** na hora.
+- Um erro estranho aparece **lá na frente** (ex.: boto3 recebendo credencial `None`/`{}` e quebrando com mensagem sem relação).
+
+### As causas (e por quê)
+- `if att.lower() is None:` → um **método de string sempre retorna string**, nunca `None`. Essa validação
+  **jamais executa**. (Se `att` fosse `None`, o `.lower()` estouraria antes.)
+- `return mapa.get(chave, {})` → em atributo inválido, devolve o default `{}` **em silêncio**, em vez de erro.
+
+### Correção
+```python
+chave = att.lower()
+if chave not in mapa:
+    raise ValueError(f"Atributo inválido: {att}.")   # falha clara
+valor = mapa[chave]
+if valor is None:
+    raise ValueError(f"'{att}' ausente no .env.")     # env faltando
+return valor
+```
+
+### Lições que ficam
+- **Método de string nunca retorna `None`** — cuidado com validações (`.lower() is None`) que nunca disparam.
+- **`.get(k, default)` esconde chave inválida** — em config de segredo, prefira **validar + `raise`**.
+- **Falha silenciosa em credencial** vira erro confuso a jusante — falhe **cedo e claro**.
+
+---
+
+## Branch protection solo — merge travado em "Review required"
+
+> **Resumo:** o CI passou verde, mas o merge fica **bloqueado** exigindo aprovação — e você **não pode
+> aprovar o próprio PR** (projeto solo). **Solução: tirar o "Require approvals" da regra (manter o status check).**
+
+### Como reconhecer
+- No PR: ✅ "All checks have passed" **mas** ⚠️ "Merging is blocked — At least 1 approving review is required".
+
+### Por que acontece
+- A branch protection está com **"Require approvals"** ligado. Num projeto **solo**, você é o único com
+  acesso de escrita, e o GitHub **proíbe aprovar o próprio PR** → o portão vira impossível.
+
+### Solução
+- **Settings → Branches** → editar a regra da `main` → em "Require a pull request before merging",
+  **desmarcar "Require approvals"** (ou pôr 0). **Manter** "Require status checks to pass" (o `validar`). Salvar.
+- (Alternativa pontual: "Merge without waiting for requirements — bypass rules" como owner. Evite virar hábito.)
+
+### Lição que fica
+- **Regra boa serve ao contexto.** Aprovação obrigatória é gate de **time** (um colega revisa); num
+  projeto **solo**, só te trava — mantenha o CI, tire a aprovação. (Num time, ligue de volta.)
+
+---
+
+## `EndpointConnectionError`: `localhost:9100` dentro do container
+
+> **Resumo:** um script com endpoint fixo `localhost:9100` funciona rodando **no host**, mas quebra
+> quando roda **dentro do Airflow** (container). **Solução: endpoint via env → `minio:9000` no container.**
+
+### Como reconhecer
+- `botocore.exceptions.EndpointConnectionError: Could not connect to the endpoint URL: "http://localhost:9100/"`
+  numa task que roda no container (ex.: `bronze` no Airflow).
+- O **mesmo** script roda liso no terminal (host), mas falha na DAG.
+
+### Por que acontece
+- Dentro do container, `localhost` = **o próprio container**, não a sua máquina. O MinIO está em
+  `minio:9000` (pela rede Docker). Endpoint fixo em `localhost:9100` só funciona do host.
+
+### Teste de conexão (provar)
+```bash
+docker compose exec airflow python -c "import socket; socket.create_connection(('minio',9000),5); print('OK minio:9000')"
+docker compose exec airflow python -c "import socket; socket.create_connection(('localhost',9100),5)"  # deve FALHAR
+```
+
+### Solução
+- Endpoint via env no script: `MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9100")`.
+- No serviço `airflow` do compose: `MINIO_ENDPOINT: "http://minio:9000"`.
+- E injetar as **credenciais** no container (o `.env` não é carregado lá dentro):
+  `MINIO_KEY: ${MINIO_KEY}` / `MINIO_SECRET: ${MINIO_SECRET}`.
+
+### Lição que fica
+- **Onde o script roda decide o endpoint:** host = `localhost:<porta publicada>`; container = `<serviço>:<porta interna>`.
+
+---
+
+## MinIO não sobe — `${VAR}` com nome errado vira string vazia
+
+> **Resumo:** o container do MinIO caía logo após subir. Causa: o compose referenciava
+> `${MINIO_PASSWORD}`, mas o `.env` define `MINIO_SECRET`. O nome não batia → variável vazia →
+> MinIO sem senha de root → recusa a iniciar. **Solução: alinhar o nome do `${VAR}` ao do `.env`.**
+
+### Como reconhecer (sintomas)
+- `docker compose ps` mostra o MinIO ausente/`Exited` enquanto os outros serviços rodam.
+- No `docker compose up`: `WARN The "MINIO_PASSWORD" variable is not set. Defaulting to a blank string.`
+- No log (`docker compose logs minio`): erro de credencial de root inválida/ausente.
+
+### Solução rápida
+- Alinhar o nome no compose ao do `.env` (`${MINIO_PASSWORD}` → `${MINIO_SECRET}`) e subir de novo.
+
+### Árvore de decisão
+- Apareceu `WARN ... variable is not set`? → o nome no `${VAR}` **não existe** no `.env`. Compare os dois.
+- Sem warning, mas o serviço cai? → é outro problema (porta, volume, config interna) — vá ao log.
+
+### Por que acontece (a causa)
+- A interpolação de variável no Compose **falha em silêncio**: `${VAR}` inexistente vira `""`, não erro.
+  O serviço recebe um valor vazio e quebra mais adiante — o MinIO exige senha de root válida.
+
+### Verificação final
+- `docker compose config` mostra o YAML **já com as variáveis resolvidas** — dá pra ver o valor vazio
+  antes de subir. Depois do fix, `docker compose up -d` → MinIO `running`.
+
+### Lições que ficam
+- Nome de `${VAR}` no compose tem que **bater exatamente** com a chave do `.env`.
+- **Warning de variável não é ruído** — é o Compose avisando de um valor vazio a caminho.
+- `docker compose config` é o "raio-x" pra pegar isso **antes** de subir.
