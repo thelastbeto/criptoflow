@@ -56,7 +56,33 @@
 - `git fetch --prune` → remove referências de branches remotas já deletadas.
 - `git remote set-url origin <url>` → troca a URL do remote.
 - `git status` antes de commitar → confira que segredos/artefatos não vão junto.
+- `git reset --hard origin/main` → alinha a `main` local **exatamente** com a do GitHub (descarta a
+  divergência local). ⚠ destrutivo: apaga commits/mudanças locais não salvas — use após diagnosticar.
+- `git config --global pull.ff only` → o `pull` só avança em linha reta (*fast-forward*); avisa **na hora**
+  se houver divergência, em vez do prompt confuso.
+- `git show --stat <sha>` → mostra **o que um commit mudou** (arquivos e nº de linhas) — útil pra
+  comparar se dois commits são a mesma mudança.
 - Fluxo: branch → commit → push → PR → merge → limpeza. **Pushed ≠ merged** (o merge é o clique no PR).
+- **Nunca commite direto na `main`** — sempre numa branch. `main` = espelho do remoto (evita divergência).
+- `.github/` (com ponto) → pasta **reservada** que o GitHub varre: workflows de CI em `.github/workflows/`,
+  templates de issue/PR, `CODEOWNERS`. O ponto = pasta **oculta** (convenção dotfile). Sem o ponto, o
+  GitHub **não acha** o CI.
+- `git pull` **não apaga** mudanças não commitadas em silêncio: se fossem conflitar, ele **recusa** (erro);
+  senão, **mantém** suas alterações. No pior caso, para — nunca destrói escondido.
+- **Mudanças não commitadas viajam com você** ao criar/trocar de branch (`git checkout -b feat/x` leva
+  tudo junto). Use `git add <arquivo>` pra **fatiar** um working tree bagunçado em commits separados.
+- `git add -p <arquivo>` → **staging por partes**: escolhe *hunk por hunk* o que entra no commit.
+  Respostas: `y` (inclui o hunk), `n` (pula), `s` (*split* — quebra um hunk grande em pedaços menores),
+  `q` (sai). É o que permite **dois commits atômicos a partir de um arquivo só** (o `git add` fatia por
+  arquivo; o `-p` fatia por pedaço).
+- `git commit --amend -m "..."` → reescreve a mensagem (ou o conteúdo) do **último** commit. Cria um
+  commit novo (hash muda). `--amend --no-edit` mantém a mensagem (útil pra anexar um arquivo esquecido).
+- `git reset --soft HEAD~1` → desfaz o **último** commit **mantendo** as mudanças no stage (pra refazer
+  o commit inteiro, não só a mensagem).
+- `git push --force-with-lease` → força o envio depois de reescrever história (amend/reset), **recusando**
+  se o remoto tiver algo que você não tem (mais seguro que `--force` seco). **Nunca** na `main`.
+- `git stash` → guarda as mudanças não commitadas "numa gaveta" e limpa o working tree; `git stash pop`
+  traz de volta. Útil pra trocar de branch ou dar `pull` sem carregar as mudanças.
 
 ## Docker / Compose
 - `docker compose config` → config resolvida (estado **desejado**); valida o YAML.
@@ -74,6 +100,11 @@
 - Volume **nomeado** (declara em `volumes:`) × **bind mount** (`./x`, não declara).
 - `Permission denied` em volume montado → uid do container ≠ dono do arquivo no host.
   Fix padrão: `user: "$(id -u):0"` no serviço.
+- **Segredos no `docker-compose.yml`?** Troque valores fixos por `${VAR}` — o compose lê automaticamente
+  o `.env` da pasta e substitui na subida. Assim o arquivo versionado não tem segredo. (Ex.:
+  `MINIO_ROOT_PASSWORD: ${MINIO_SECRET}`.) Commite um `.env.example` só com os nomes das variáveis.
+- Injetar segredo/config do host no container: `MINHA_VAR: ${MINHA_VAR}` no `environment:` do serviço
+  (puxa do `.env`) — porque o container **não** carrega o `.env` sozinho.
 
 ## Airflow
 - Pegar a senha do admin (modo standalone):

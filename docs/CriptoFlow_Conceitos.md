@@ -5,7 +5,7 @@
 > **B) Dicionário de expressões** — termos novos, no formato *O que é* + *O que avalia* (o que a
 > pergunta testa numa entrevista ou o que a escolha comunica na prática).
 >
-> Novos termos são adicionados em ordem alfabética. Última atualização: 2026-07-23.
+> Novos termos são adicionados em ordem alfabética. Última atualização: 2026-09-14.
 
 ---
 
@@ -471,9 +471,94 @@ Cada trigger processa o que chegou desde o anterior. **Sem dado novo → batch v
 **Batch parcial (só uma moeda):** com `update`, se os eventos de um poll caem em micro-batches
 diferentes (timing do Kafka), a mesma janela é **atualizada aos pedaços** — não é duplicação nem backup.
 
+### A.20 — CI/CD e proteção da `main` (as três camadas)
+
+**CI (Continuous Integration):** a cada Pull Request, o **GitHub Actions** roda checagens automáticas
+(o seu `.github/workflows/ci.yml`) numa máquina descartável — no CriptoFlow: `py_compile` (sintaxe) +
+`dbt parse` (modelos/refs). Valida o **mecânico** sem depender da sua atenção.
+
+**A rede de segurança tem buracos que você define:** o CI só pega **o que você ensina** (os checks que
+escreve). Não é garantia contra *toda* quebra — quanto mais testes (pytest, `dbt test` com dados, lint),
+mais apertada a rede.
+
+**As três camadas que protegem a `main`:**
+1. **Revisão humana** — você lê o diff no PR (julgamento: a abordagem/lógica está certa?).
+2. **CI** — o robô valida o mecânico automaticamente (compila? parseia? testes passam?).
+3. **Branch protection** — o **portão**: regras no repo que **bloqueiam o merge** se o check falhar e
+   **exigem PR** (impedem commit direto na `main`). É o que torna o CI *obrigatório*, não só informativo.
+
+**CD (Continuous Delivery/Deployment):** o passo além — automatizar a **entrega/deploy** depois que o CI
+passa. (Não implementamos, mas é o "CD" da sigla.)
+
+### A.21 — Gerenciamento de segredos com `.env`
+
+**Segredos (chaves, senhas, tokens) nunca vão no código nem no Git.** O padrão:
+- Um arquivo **`.env`** (formato `CHAVE=valor`) guarda os segredos, **fora** do código.
+- Lido com **`python-dotenv`**: `load_dotenv()` carrega o `.env`; `os.getenv("MINIO_KEY")` pega o valor.
+- O **`.env` vai no `.gitignore`** — nunca é commitado. Um `.env.example` (só os nomes das variáveis, sem
+  valores) *pode* ir pro repo, pra documentar o que precisa ser preenchido.
+- O **Docker Compose também lê `.env`**: `${MINIO_KEY}` no compose puxa do `.env` — assim o segredo mora
+  num lugar só.
+- Um *helper* pode centralizar o mapeamento (ex.: uma função que devolve a credencial certa), mas
+  `os.getenv` direto onde precisa também é válido.
+
+**Relaciona:** A.14 (o `profiles.yml` do dbt fora do repo) — mesma filosofia: código versionado, segredo separado.
+
+### A.22 — Contexto de execução: host × container decide o endpoint
+
+O **mesmo script** conecta em **endereços diferentes** dependendo de **onde roda**:
+- **No host** (você, no terminal): o serviço é `localhost:<porta publicada>` — ex.: MinIO em `localhost:9100`.
+- **Dentro de um container** da mesma rede: é `<nome do serviço>:<porta interna>` — ex.: `minio:9000`.
+  Ali, `localhost` = **o próprio container**, não o host.
+
+Por isso, um script que roda **nos dois contextos** (ex.: `bronze.py` — na mão **e** dentro do Airflow)
+deve ler o endpoint de uma **variável de ambiente** (`os.getenv("MINIO_ENDPOINT", "http://localhost:9100")`):
+no host cai no padrão; no container, o serviço define `MINIO_ENDPOINT=http://minio:9000`. Scripts **só-host**
+(ex.: `lakehouse.py`, `consultar.py`) podem hardcode `localhost`, mas o env é mais seguro/portável.
+
+**Relaciona:** A.13 (rede Docker — nome do serviço × porta interna × `localhost`).
+
+### A.23 — Imagem própria com Dockerfile (FROM, COPY, RUN) e o build context
+
+**Ideia central: o Docker não adivinha nada.** Ele não escaneia seu código nem gera lista de
+dependência — só executa as ordens do Dockerfile, de cima pra baixo. Pensa no **Dockerfile como uma
+receita** e no `requirements-airflow.txt` como um **ingrediente que você já deixou na bancada**: a
+receita manda "use o ingrediente", mas quem coloca o ingrediente na bancada é **você**.
+
+As três instruções que usamos:
+- **`FROM apache/airflow:2.10.5`** — a **imagem base**. A gente *estende* a imagem oficial (já vem com
+  Airflow, Python, o usuário `airflow`), não recria do zero. Pinada na versão exata → reprodutibilidade
+  na infra (mesma lição do pyarrow).
+- **`COPY <origem> <destino>`** — copia um arquivo que **já existe no repo** pra dentro da imagem. Ex.:
+  `COPY requirements-airflow.txt /requirements-airflow.txt`. O `COPY` **não cria** o arquivo — ele
+  **exige** que ele exista; se não existir, o build falha (`COPY failed: file not found`). A *origem* é
+  lida do **build context** (a pasta mandada pro Docker no build, definida por `context:` no compose).
+- **`RUN <comando>`** — executa algo **durante o build**, e o resultado fica gravado na imagem.
+  `RUN pip install -r /requirements-airflow.txt` **assa** as libs pra dentro da imagem. É por isso que
+  nos boots seguintes nada é reinstalado — já está tudo lá.
+
+**Por que um arquivo `.txt` em vez de `RUN pip install boto3 pandas...` direto?** Funciona das duas
+formas, mas o arquivo é versionado, legível no diff do PR e é a convenção Python.
+
+**Por que `requirements-airflow.txt` separado do `requirements.txt`?** São **dois contextos**: o
+`requirements.txt` é do seu *venv local* (host); o `-airflow` é das libs *dentro do container*.
+Misturar traria libs demais pra dentro da imagem.
+
+**O ganho (liga com o trade-off `image × build`):** builda uma vez, sobe em segundos depois.
+`_PIP_ADDITIONAL_REQUIREMENTS` é dev; imagem própria é produção. Ver A.13 (rede/volumes) e a seção
+"Decisões" do Guia de Parâmetros.
+
 ---
 
 ## Parte B — Dicionário de expressões
+
+### ACID
+- **O que é:** as quatro garantias de uma transação confiável — **A**tomicidade (tudo ou nada),
+  **C**onsistência (nunca deixa em estado inválido), **I**solamento (transações concorrentes não se
+  atrapalham), **D**urabilidade (o confirmado persiste). Clássico de bancos transacionais (OLTP); os
+  *table formats* (Iceberg/Delta) trazem ACID pro data lake.
+- **O que avalia:** se você distingue "gravar um arquivo" de "uma transação confiável" — e por que o
+  lakehouse precisou trazer isso pro lake.
 
 ### Airflow
 - **O que é:** orquestrador de pipelines open-source. Modela o fluxo como um **DAG**, agenda, gerencia
@@ -504,6 +589,32 @@ diferentes (timing do Kafka), a mesma janela é **atualizada aos pedaços** — 
   (advertise/connect)**. Aparece em erros como `bind: address already in use` (porta ocupada) e na config
   de *listeners* (Kafka, servidores web...).
 
+### Branch protection
+- **O que é:** regras no repositório que **protegem uma branch** (ex.: `main`) — exigir PR, exigir que
+  os checks (CI) passem antes do merge, impedir push direto/force-push. É o **portão** que torna o CI obrigatório.
+- **O que avalia:** se você sabe **impor** o fluxo de qualidade — não deixar entrar na `main` código quebrado ou sem revisão.
+
+### Build context
+- **O que é:** o conjunto de arquivos (uma pasta, definida por `context:`) que o Docker recebe pra
+  construir a imagem. O `COPY` só enxerga o que está **dentro** do context — não dá pra copiar um
+  arquivo de fora dele.
+- **O que avalia:** se você entende de onde o `COPY` puxa os arquivos, e por que às vezes ele "não acha"
+  um arquivo que existe na sua máquina (está fora do context).
+
+### Callback
+- **O que é:** uma função que você **passa** pra outra função/ferramenta executar **quando um evento
+  acontece** ("me chame de volta quando X ocorrer"). No Airflow, `on_failure_callback` roda quando uma
+  task falha (ex.: disparar um alerta no Slack).
+- **O que avalia:** se você entende o padrão de **reagir a eventos** — base de alertas, hooks e
+  programação orientada a eventos.
+
+### CI/CD
+- **O que é:** *Continuous Integration / Continuous Delivery (ou Deployment)*. **CI** = validar cada
+  mudança automaticamente (build/testes) a cada PR; **CD** = automatizar a entrega/deploy depois que
+  passa. No projeto: GitHub Actions rodando `py_compile` + `dbt parse` a cada PR.
+- **O que avalia:** se você trata pipeline de dados como **software** — validação automática antes de
+  integrar. Responde "como você garante que uma mudança não quebra produção?".
+
 ### Código legado
 - **O que é:** código que já fez parte do sistema mas foi substituído ou ficou dormente (ex.:
   `pipeline.py`, que gravava no Postgres, superado pelo data lake). Ainda existe, mas não está no fluxo ativo.
@@ -516,6 +627,13 @@ diferentes (timing do Kafka), a mesma janela é **atualizada aos pedaços** — 
   e dos warehouses OLAP. O oposto é *row-based* (OLTP), otimizado pra ler/gravar linhas inteiras.
 - **O que avalia:** se você entende por que analytics usa formato colunar — menos I/O e melhor
   compressão — e por que OLTP transacional prefere linhas.
+
+### Continuous Delivery × Continuous Deployment
+- **O que é:** as duas variações do "CD". **Delivery** = automatiza tudo até um artefato **pronto pra
+  release**, mas o disparo pra produção é **manual** (uma aprovação/botão). **Deployment** = vai **direto
+  pra produção**, sem gate manual, a cada mudança que passa no CI.
+- **O que avalia:** se você entende o nível de automação e risco de cada um — *Deployment* exige testes e
+  confiança muito maiores, porque não há humano no caminho até a produção.
 
 ### Cron
 - **O que é:** o agendador de tarefas do Linux. Lê uma tabela (a *crontab*) onde cada linha define
@@ -558,6 +676,13 @@ diferentes (timing do Kafka), a mesma janela é **atualizada aos pedaços** — 
 - **O que avalia:** se você faz transformação como engenharia de software (SQL versionado, testado, com
   lineage) e entende sua **fronteira** (não faz ingestão).
 
+### Dockerfile
+- **O que é:** a "receita" (arquivo de texto com instruções) que define como construir uma **imagem**
+  Docker própria — a partir de uma base (`FROM`), copiando arquivos (`COPY`) e rodando comandos (`RUN`)
+  no build. Construído com `docker build` / `docker compose build`.
+- **O que avalia:** se você sabe criar ambientes **reproduzíveis** — e não depende de instalar coisa
+  "na mão" a cada boot.
+
 ### DRY (Don't Repeat Yourself)
 - **O que é:** princípio de engenharia de software que diz "não se repita" — cada pedaço de lógica
   deve existir em **um único lugar**. Em vez de copiar e colar o mesmo código, você o extrai para uma
@@ -591,6 +716,26 @@ diferentes (timing do Kafka), a mesma janela é **atualizada aos pedaços** — 
 - **Quando aparece:** costuma descrever setup/config com muitas peças interdependentes (Kafka, S3A,
   listeners, jars). Não é termo técnico — é vocabulário pra dizer "isso dá trabalho pra deixar redondo".
 
+### Freshness
+- **O que é:** quão **recente** está o dado — "o último registro é de quando?". Pilar de observabilidade
+  focado em **atualidade** (ex.: `dbt source freshness` falha se o dado mais novo for velho demais).
+  Diferente de *qualidade geral* (correção dos valores), que os testes cobrem.
+- **O que avalia:** se você monitora se os dados chegam no **ritmo esperado** — dado velho é tão ruim
+  quanto dado errado.
+
+### git add -p (staging seletivo)
+- **O que é:** modo interativo do `git add` que apresenta as mudanças em **hunks** (blocos) e deixa você
+  escolher *pedaço por pedaço* o que vai pro próximo commit (`y`/`n`, `s` pra dividir). Permite separar,
+  num **mesmo arquivo**, mudanças que pertencem a commits diferentes.
+- **O que avalia:** se você faz **commits atômicos** — um commit, uma intenção — mesmo quando um `fix` e
+  um `feat` calharam de cair no mesmo arquivo. Histórico limpo facilita *review*, *revert* e `git bisect`;
+  é sinal de maturidade de engenharia.
+
+### GitHub Actions
+- **O que é:** a ferramenta de CI/CD do GitHub. Roda *workflows* (arquivos YAML em `.github/workflows/`)
+  numa máquina descartável, disparados por eventos (ex.: `pull_request`). Cada workflow tem *jobs* com *steps*.
+- **O que avalia:** se você sabe automatizar checagens e deploy dentro do fluxo do GitHub.
+
 ### Granularidade
 - **O que é:** o nível de detalhe que uma linha da tabela representa — ou seja, "o que uma linha
   significa". Em `mercado_bruto`, a granularidade é *uma moeda em um instante de coleta*
@@ -616,6 +761,19 @@ diferentes (timing do Kafka), a mesma janela é **atualizada aos pedaços** — 
 - **O que avalia:** se você sabe validar a consistência entre fato e dimensão (nenhum FK nulo ou órfão).
   É o teste `relationships` do dbt e a base da confiabilidade de um modelo dimensional.
 
+### Jars
+- **O que é:** *Java ARchive* — arquivos `.jar` que empacotam bibliotecas Java. O Spark (que roda na JVM)
+  usa jars pra estender funcionalidade: conectores como o **S3A** (`hadoop-aws`), o `spark-sql-kafka`, o
+  runtime do Iceberg. Baixados via `spark.jars.packages` (Maven).
+- **O que avalia:** se você sabe que estender o Spark é adicionar jars — e o cuidado de **casar a versão**
+  deles com a do Spark/Hadoop (senão, `ClassNotFoundException`).
+
+### JVM
+- **O que é:** *Java Virtual Machine* — o "motor" que roda programas Java/Scala. **Spark e Kafka são
+  escritos pra JVM**, por isso precisam de um Java instalado (mesmo o PySpark, que é uma casca Python por cima).
+- **O que avalia:** se você entende por que ferramentas do ecossistema Hadoop (Spark, Kafka) exigem Java —
+  e por que a config delas envolve jars.
+
 ### Kimball
 - **O que é:** Ralph Kimball, autor de *The Data Warehouse Toolkit*, referência clássica de
   **modelagem dimensional**. A abordagem Kimball organiza dados analíticos em *star schema*: uma
@@ -633,6 +791,12 @@ diferentes (timing do Kafka), a mesma janela é **atualizada aos pedaços** — 
   Apache Iceberg / Delta Lake. É a arquitetura que mais cresce no mercado.
 - **O que avalia:** se você acompanha as arquiteturas atuais e sabe o problema que o lakehouse resolve —
   evitar a duplicação lake + warehouse e reduzir custo. Cai em entrevista de arquitetura sênior.
+
+### Lineage (linhagem)
+- **O que é:** o **mapa de dependências** entre datasets/colunas — de onde cada dado **vem** e pra onde
+  **vai**. Ao ver um número errado, você segue o lineage **pra trás** até a origem; ao mudar uma fonte,
+  mede o **impacto a jusante** antes de quebrar algo. O dbt gera automático a partir dos `ref()`.
+- **O que avalia:** se você sabe **rastrear origem e impacto** — essencial pra debugar e pra mudar sem quebrar.
 
 ### Lookup
 - **O que é:** operação de **buscar** um valor correspondente em outra tabela a partir de uma chave —
@@ -668,6 +832,13 @@ diferentes (timing do Kafka), a mesma janela é **atualizada aos pedaços** — 
 - **O que avalia:** se você entende a base do data lake — por que object storage é barato e escalável,
   e por que ele não tem "pastas de verdade" (o que parece pasta são só prefixos no nome da chave).
 
+### Observabilidade
+- **O que é:** a capacidade de saber a **saúde** das pipelines e dos dados — responder rápido "o que
+  quebrou, o que foi afetado, desde quando". Quatro pilares: métricas de pipeline, freshness/qualidade,
+  lineage e alertas.
+- **O que avalia:** se você trata dados como **sistema de produção** (monitorar, alertar, diagnosticar),
+  não só "rodou o script".
+
 ### Orquestração
 - **O que é:** coordenar **o que roda, quando e em que ordem**, com dependências entre tarefas, retries,
   agendamento, backfill, alertas e visibilidade. Ferramenta padrão: Apache Airflow (modela o pipeline
@@ -696,6 +867,12 @@ diferentes (timing do Kafka), a mesma janela é **atualizada aos pedaços** — 
 - **O que avalia:** se você sabe estruturar um lake pra performance — o *partition pruning* (ler só as
   partições que o filtro pede) reduz I/O e custo. Relacionado: *Parquet*, FinOps.
 
+### Postmortem
+- **O que é:** análise **sem culpados** (*blameless*) feita **após um incidente** — o que falhou, por
+  quê, e o que mudar pra não repetir. Emprestado da cultura DevOps/SRE.
+- **O que avalia:** maturidade de confiabilidade — **aprender com a falha** (documentar, melhorar) em vez
+  de caçar culpado. (O seu runbook é primo disso.)
+
 ### S3
 - **O que é:** Amazon Simple Storage Service, o serviço de object storage da AWS (de 2006). Virou o
   **padrão de fato** — sua API é um "idioma comum" que outras ferramentas (MinIO, etc.) implementam.
@@ -710,6 +887,11 @@ diferentes (timing do Kafka), a mesma janela é **atualizada aos pedaços** — 
 - **O que avalia:** se você sabe conectar **processamento distribuído** ao object storage — e o cuidado
   crítico de **casar a versão do `hadoop-aws` com a versão do Hadoop embutida no Spark** (versão errada
   = `ClassNotFoundException`). É o análogo do `httpfs` do DuckDB, no mundo Spark.
+
+### Schema Evolution
+- **O que é:** mudar o schema de uma tabela (adicionar/renomear/remover colunas) **sem reescrever** todos
+  os dados. Os *table formats* (Iceberg/Delta) gerenciam isso via metadados.
+- **O que avalia:** se você entende como evoluir tabelas em produção sem downtime nem reprocessamento caro.
 
 ### SDK
 - **O que é:** *Software Development Kit* — conjunto de bibliotecas e ferramentas que uma plataforma
@@ -763,6 +945,12 @@ diferentes (timing do Kafka), a mesma janela é **atualizada aos pedaços** — 
 - **O que avalia:** se você sabe *quando* streaming se justifica (latência baixa) e quando é
   over-engineering. Entender *event time* vs. *processing time* e as garantias de entrega
   (at-most / at-least / exactly-once) é marca de senioridade.
+
+### Time travel
+- **O que é:** consultar uma tabela **como ela estava** num snapshot/versão anterior. Nos *table formats*,
+  cada escrita cria uma versão; você lê qualquer uma (ex.: `version=0`). Útil pra auditoria, debug e reprocessamento.
+- **O que avalia:** se você conhece um dos maiores ganhos do lakehouse sobre Parquet puro — o histórico
+  versionado e navegável da tabela.
 
 ### Topic
 - **O que é:** o **canal nomeado** de eventos no Kafka — a categoria onde as mensagens do mesmo tipo vão
