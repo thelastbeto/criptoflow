@@ -75,6 +75,12 @@
   Respostas: `y` (inclui o hunk), `n` (pula), `s` (*split* — quebra um hunk grande em pedaços menores),
   `q` (sai). É o que permite **dois commits atômicos a partir de um arquivo só** (o `git add` fatia por
   arquivo; o `-p` fatia por pedaço).
+- `git commit --amend -m "..."` → reescreve a mensagem (ou o conteúdo) do **último** commit. Cria um
+  commit novo (hash muda). `--amend --no-edit` mantém a mensagem (útil pra anexar um arquivo esquecido).
+- `git reset --soft HEAD~1` → desfaz o **último** commit **mantendo** as mudanças no stage (pra refazer
+  o commit inteiro, não só a mensagem).
+- `git push --force-with-lease` → força o envio depois de reescrever história (amend/reset), **recusando**
+  se o remoto tiver algo que você não tem (mais seguro que `--force` seco). **Nunca** na `main`.
 - `git stash` → guarda as mudanças não commitadas "numa gaveta" e limpa o working tree; `git stash pop`
   traz de volta. Útil pra trocar de branch ou dar `pull` sem carregar as mudanças.
 

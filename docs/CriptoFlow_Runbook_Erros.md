@@ -756,3 +756,106 @@ docker compose exec airflow python -c "import socket; socket.create_connection((
 - Nome de `${VAR}` no compose tem que **bater exatamente** com a chave do `.env`.
 - **Warning de variável não é ruído** — é o Compose avisando de um valor vazio a caminho.
 - `docker compose config` é o "raio-x" pra pegar isso **antes** de subir.
+
+---
+
+## `restart: unless-stopped` não ressuscita após `docker kill`/`stop` (e tudo bem)
+
+> **Resumo:** depois de `docker kill` num container com `restart: unless-stopped` aplicado, ele **não**
+> volta sozinho — e isso é **esperado**. A política distingue parada **intencional** (você mandou) de
+> queda **real** (crash/reboot).
+
+### Como reconhecer
+- `docker kill <container>` e o container fica `Exited`, não reinicia — mesmo com a política aplicada.
+- `docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' <container>` confirma `unless-stopped` (a
+  política **está** lá — não é erro de config).
+
+### Por que acontece
+- `unless-stopped` = reinicia sempre, **exceto** quando a parada foi intencional. `docker kill`/`stop`
+  são ações suas (intencionais) → a política respeita e não ressuscita (senão você nunca derrubaria o
+  serviço de propósito). O restart vale pra: **processo que crasha sozinho** e **reboot** da máquina/daemon.
+
+### Como testar de verdade
+- Reinicie o Docker Desktop (ou `wsl --shutdown` / reboot) e confira `docker compose ps`: os serviços
+  com `unless-stopped` voltam `Up` **sozinhos**. É esse o ganho da política.
+
+### Lições que ficam
+- A política é gravada na **criação** do container — mudou o compose, **recrie** (`docker compose up -d`)
+  e confirme com `docker inspect`.
+- `kill`/`stop` = intencional (não volta). **Crash/reboot** = volta. Teste a política pelo **reboot**, não pelo `kill`.
+
+---
+
+## Docker Desktop: "WSL integration unexpectedly stopped" após restart
+
+> **Resumo:** depois de reiniciar o Docker/WSL, o Docker Desktop mostra *"WSL integration with distro
+> 'Ubuntu-22.04' unexpectedly stopped"* com `ExecError: ...docker-desktop-user-distro ... Permission denied`.
+> Os containers seguem `Up` — quebrou só a **ponte** que expõe o `docker` dentro do Ubuntu.
+
+### Como reconhecer
+- Pop-up do Docker Desktop com `execvpe(/mnt/wsl/docker-desktop/docker-desktop-user-distro) failed: Permission denied`.
+- O `docker` para de funcionar **dentro do terminal do Ubuntu**, mas os containers aparecem `Up` no Docker Desktop.
+
+### Solução (ordem que funcionou aqui)
+1. `wsl --shutdown` no **PowerShell**; espere ~10s; reabra Ubuntu + Docker Desktop.
+2. Desligue/ligue a integração: **Settings → Resources → WSL Integration** → toggle do `Ubuntu-22.04` (Apply nos dois).
+3. Clique **"Restart the WSL integration"** no pop-up.
+   *(No caso real foi preciso 2 → 3 pra voltar; o passo 1 sozinho não bastou.)*
+
+### Por que acontece
+- É a **integração WSL** do Docker Desktop (a ponte que expõe o `docker` nas distros) que engasga ao
+  reconectar depois de um restart. **Não** tem relação com o compose/projeto. **Nunca** clique
+  "Skip WSL distro integration" — isso desliga o `docker` dentro do Ubuntu.
+
+### Lição que fica
+- **Container `Up` ≠ integração OK.** Se o `docker` some no terminal mas os containers rodam, o
+  problema é a integração WSL, não o seu projeto.
+
+---
+
+## Commit com mensagem (ou conteúdo) errado — como corrigir
+
+> **Resumo:** commitou e percebeu que a mensagem está errada (ou faltou/sobrou arquivo). Dá pra corrigir
+> **sem recomeçar** — sem apagar nada.
+
+### Como reconhecer
+- `git log --oneline` mostra o último commit com a mensagem errada, ou `git show`/`git status` revela
+  um arquivo a mais/menos no commit.
+
+### Solução (com exemplos reais)
+
+**Caso 1 — só a mensagem está errada.** Você commitou com um typo e quer corrigir:
+```bash
+git log --oneline -1
+# a1b2c3d feat: heathcheck + restart        <- typo em "healthcheck"
+
+git commit --amend -m "feat: healthcheck + restart nos servicos do compose"
+
+git log --oneline -1
+# e4f5g6h feat: healthcheck + restart nos servicos do compose   <- corrigido
+```
+Repara: o **hash mudou** (`a1b2c3d` → `e4f5g6h`). O `amend` não "edita" o commit — ele cria um novo no lugar.
+
+**Caso 2 — esqueceu um arquivo no commit.** Commitou o `docker-compose.yml` mas esqueceu o `Dockerfile.airflow`:
+```bash
+git add Dockerfile.airflow
+git commit --amend --no-edit        # anexa o arquivo ao ultimo commit, mantendo a mensagem
+```
+
+**Caso 3 — refazer o commit do zero (sem perder o trabalho).**
+```bash
+git reset --soft HEAD~1     # desfaz o commit; os arquivos voltam pro stage, nada e perdido
+git status                  # tudo "staged", pronto pra commitar de novo
+git commit -m "mensagem nova"
+```
+
+**Se o commit errado já tinha ido pro GitHub:** depois de corrigir (Caso 1, 2 ou 3), envie com
+`git push --force-with-lease`.
+
+### Cuidado
+- `--force-with-lease` só em branch de feature **sua**. **Nunca** reescreva a história da `main`
+  (a branch protection existe pra isso).
+
+### Lição que fica
+- Git raramente exige "recomeçar": `amend` corrige o último commit; `reset --soft` desfaz mantendo o
+  trabalho. Reescrever história é seguro **só antes do merge e só na sua branch**.

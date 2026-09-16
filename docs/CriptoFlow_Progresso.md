@@ -2,7 +2,7 @@
 
 > Mapa da jornada: o que foi construído, o que se aprendeu e quais ferramentas em cada etapa.
 > Serve como visão geral do projeto e roteiro pra explicá-lo em entrevistas.
-> Última atualização: 2026-08-12.
+> Última atualização: 2026-09-16.
 
 ---
 
@@ -44,7 +44,24 @@
 | Streaming | Producer/consumer, topics/partitions/offsets, ingestão de eventos pro lake em micro-lotes | Apache Kafka (KRaft) |
 | Streaming com Spark | "Tabela infinita", event time × processing time, watermark, micro-batches/triggers | Spark Structured Streaming |
 
-**Núcleo da Parte III concluído ✅** — trilha batch (Spark distribuído) + trilha streaming (Kafka → consumidor → lake, e Kafka → Spark Streaming com janela/watermark). Complementos opcionais: lakehouse transacional (Iceberg/Delta), CI/CD de dados, observabilidade/lineage.
+**Parte III concluída ✅** — trilha batch (Spark distribuído) + trilha streaming (Kafka → consumidor → lake, e Kafka → Spark Streaming com janela/watermark). Complementos também entregues: **lakehouse transacional** (Delta Lake, ACID + time travel), **CI/CD de dados** (GitHub Actions + branch protection), **observabilidade** (alerta de falha via `on_failure_callback`) e **gestão de segredos** (`.env` + classe `Credentials` + `${VAR}`).
+
+---
+
+## Fase de Aprofundamento — domínio local das ferramentas
+
+> Antes de ir pra nuvem/governança (Parte IV), uma fase de **aprofundar o que já se usa localmente**:
+> ler os parâmetros de cada ferramenta, avaliar trade-offs e aplicar **só** as melhorias que valem no
+> contexto (solo, local, estudo). Referência: **Guia de Parâmetros**.
+
+| Frente | O que se aprendeu a fazer | Ferramentas |
+|---|---|---|
+| Docker Compose — hardening | Imagem própria do Airflow (Dockerfile: `FROM`/`COPY`/`RUN`, build context) no lugar do `_PIP_ADDITIONAL_REQUIREMENTS`; `healthcheck` + `depends_on: service_healthy` (prontidão real, não só start); `restart: unless-stopped` | Docker, Dockerfile |
+| Prática de DevOps | Issues ligadas a cada branch; **GitHub Flow** (e por que descartar o GitFlow como over pra solo); commits atômicos com `git add -p`; corrigir mensagem com `git commit --amend` + `push --force-with-lease` | Git/GitHub |
+
+**Em andamento.** Próximas frentes do Guia de Parâmetros: Spark, Airflow, dbt, Kafka.
+
+---
 
 **Próximo horizonte (Parte IV — Especialista):** arquitetura de plataforma, governança e contratos de dados, IaC/Kubernetes, LGPD/PII, FinOps, DataOps/SLAs, CDC. Mais decisão e trade-off do que código.
 
