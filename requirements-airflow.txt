@@ -1,0 +1,5 @@
+boto3
+pandas
+pyarrow==25.0.0
+requests
+dbt-duckdb==1.11.0
