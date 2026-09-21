@@ -5,7 +5,7 @@
 > **B) Dicionário de expressões** — termos novos, no formato *O que é* + *O que avalia* (o que a
 > pergunta testa numa entrevista ou o que a escolha comunica na prática).
 >
-> Novos termos são adicionados em ordem alfabética. Última atualização: 2026-09-14.
+> Novos termos são adicionados em ordem alfabética. Última atualização: 2026-09-17.
 
 ---
 
@@ -548,6 +548,74 @@ Misturar traria libs demais pra dentro da imagem.
 `_PIP_ADDITIONAL_REQUIREMENTS` é dev; imagem própria é produção. Ver A.13 (rede/volumes) e a seção
 "Decisões" do Guia de Parâmetros.
 
+### A.24 — Dependabot e a validação de um PR de dependência
+
+**O que é o Dependabot:** um bot do GitHub que vigia suas dependências, abre **alertas** de
+vulnerabilidade (CVEs) e **PRs** subindo a versão pra uma corrigida. Ligar é higiene de segurança.
+
+**Um PR do Dependabot é uma PROPOSTA, não verdade.** Subir versão pode quebrar (principalmente salto
+**major**). Nunca mergeie no automático — trate como PR normal, com teste.
+
+**O fluxo de validação (smoke test):**
+1. **Olhe o tamanho do salto (SemVer):** patch `x.y.Z` = risco baixíssimo; minor `x.Y.z` = geralmente ok;
+   major `X.y.z` = leia o changelog (que o Dependabot cola no PR).
+2. **Traga a branch do PR** pro seu PC: `git fetch origin` + `git checkout <branch>` (ou `@dependabot rebase`
+   antes, se estiver atrasada).
+3. **Teste num venv descartável** (`/tmp/venv-teste`) pra não sujar seu ambiente.
+4. **Rode o caminho crítico:** `python3 bronze.py` (ingestão) + `dbt build` (transformação). Passou sem
+   traceback e com testes em `PASS` → seguro.
+5. **Verde → mergeia** (resolve o alerta); **quebrou → investiga/não mergeia**.
+
+**Armadilha (a que a gente caiu):** se a branch do PR está **atrasada** em relação à `main`, você testa
+**código velho + a dependência nova** misturados → **falso negativo** (o MinIO quebrou pelo bug antigo do
+`${MINIO_PASSWORD}`, não pelo tornado). Atualize a branch antes de testar. Ver runbook.
+
+**Contexto importa:** o CriptoFlow não expõe servidor web, então CVEs de DoS/cookie no `tornado` (dep
+transitiva) têm risco real baixo aqui — mas atualizar é boa higiene e limpa o alerta.
+
+### A.25 — Reprodutibilidade de ambiente (tudo declarado, nada "na mão")
+
+**Princípio:** qualquer pessoa (ou o CI, ou uma máquina nova) deve montar o ambiente **idêntico** rodando
+só o que está **declarado** — sem depender de nada instalado manualmente.
+
+**Dois furos que o projeto tinha (e o venv descartável revelou):**
+- **Dependência fantasma:** o `dbt-duckdb` funcionava no venv de trabalho porque foi instalado na mão, mas
+  **não estava no `requirements.txt`**. Instalação limpa não trazia o dbt (`Command 'dbt' not found`).
+  Correção: declarar `dbt-duckdb==1.11.0` no requirements.
+- **Artefato gerado versionado:** o `criptoflow.duckdb` (banco que o dbt materializa, ~1.8 MB) estava
+  **rastreado no git**. Artefato gerado não se versiona — muda a cada run, incha o repo. Correção:
+  `git rm --cached` + `.gitignore` (`*.duckdb`, `target/`, `dbt_packages/`, `logs/`, `.user.yml`).
+
+**Por que o venv descartável é o detetive:** no seu venv de trabalho tudo "funciona" — dependências
+instaladas na mão ficam escondidas. Um ambiente **limpo** expõe o que não está declarado. É o mesmo
+ambiente que o CI enfrenta.
+
+**Regra:** só **código e configuração** vão pro git; **segredos** (`.env`) e **artefatos gerados**
+(`*.duckdb`, `target/`), nunca. Liga com A.14 (profiles fora do repo) e A.23 (imagem reproduzível).
+
+### A.26 — Exposição de portas: `0.0.0.0` × `127.0.0.1` (superfície de ataque na LAN)
+
+**O `ports: "5433:5432"` publica em `0.0.0.0` por padrão** — o serviço escuta em **todas as interfaces
+de rede** da máquina, inclusive a da rede local. Consequência: **qualquer aparelho na sua LAN** (outro PC,
+celular, IoT) pode alcançar `<seu-IP-na-LAN>:5433`.
+
+**Prova real (CriptoFlow):** `Test-NetConnection 192.168.100.181 -Port 5433` → `TcpTestSucceeded: True`.
+A porta do Postgres estava aberta pra casa toda.
+
+**Por que é risco:** mesmo com senha, um serviço exposto é **superfície de ataque** — brute force, CVE do
+próprio serviço, e o pior: um deslize de config (lembra do MinIO com senha vazia?) vira brecha real se a
+porta estiver na rede. Um aparelho infectado na LAN já basta.
+
+**Correção — bind no loopback:** `ports: "127.0.0.1:5433:5432"` faz escutar **só na interface local**.
+Você (no host) continua acessando; a LAN **não alcança mais**, independente do firewall. É *defesa em
+profundidade*: não depende de uma única barreira.
+
+**Não afeta containers:** eles falam entre si pelo **nome do serviço** na rede Docker (`minio:9000`), não
+pela porta publicada. O bind loopback só muda quem, **de fora**, pode entrar.
+
+**Nuance:** o `0.0.0.0` só *escuta*; se outro PC realmente conecta depende também do firewall do host.
+Mas não conte com o firewall como única guarda — o `127.0.0.1` fecha a porta na estrutura. Ver verbete *Bind*.
+
 ---
 
 ## Parte B — Dicionário de expressões
@@ -675,6 +743,12 @@ Misturar traria libs demais pra dentro da imagem.
   materializa, ordena via `ref()`, testa e documenta. Padrão de mercado.
 - **O que avalia:** se você faz transformação como engenharia de software (SQL versionado, testado, com
   lineage) e entende sua **fronteira** (não faz ingestão).
+
+### Dependabot
+- **O que é:** bot do GitHub que monitora suas dependências, abre **alertas** de vulnerabilidade (CVE) e
+  **PRs** subindo pra versão corrigida. Configurável por `.github/dependabot.yml`.
+- **O que avalia:** se você trata a **segurança da cadeia de dependências** como parte do trabalho — e se
+  sabe **validar** (não mergear cego) o PR que ele propõe.
 
 ### Dockerfile
 - **O que é:** a "receita" (arquivo de texto com instruções) que define como construir uma **imagem**
@@ -900,6 +974,12 @@ Misturar traria libs demais pra dentro da imagem.
 - **O que avalia:** vocabulário de base — distinguir **SDK** (biblioteca pra desenvolver) de **API**
   (a interface que o SDK consome por baixo) e de **CLI** (ferramenta de linha de comando).
 
+### SemVer (versionamento semântico)
+- **O que é:** convenção `MAJOR.MINOR.PATCH` (ex.: `6.5.8`). **Patch** = correção compatível; **Minor** =
+  recurso novo compatível; **Major** = mudança que **pode quebrar** (breaking change).
+- **O que avalia:** se você lê o **risco de uma atualização** pelo tipo do salto — patch é quase sempre
+  seguro; major exige ler o changelog. Base pra decidir sobre um PR de dependência.
+
 ### Slowly Changing Dimension (SCD)
 - **O que é:** técnica para lidar com atributos de dimensão que **mudam devagar ao longo do tempo**
   (ex.: nome ou categoria de uma moeda). As variações mais citadas:
@@ -909,6 +989,12 @@ Misturar traria libs demais pra dentro da imagem.
 - **O que avalia:** se você sabe **preservar histórico** numa dimensão em vez de apagá-lo. É
   conhecimento clássico de Kimball e cai bastante em entrevistas de modelagem. Saber quando usar
   Tipo 1 (não importa o histórico) vs. Tipo 2 (o histórico importa) é a parte que conta.
+
+### Smoke test
+- **O que é:** teste rápido que "acende o essencial" pra ver se sai fumaça — no CriptoFlow, rodar o
+  caminho crítico (`bronze.py` + `dbt build`) pra **provar** que uma mudança não quebrou o pipeline.
+- **O que avalia:** se você **valida com prova** antes de integrar, em vez de "mergeei e rezei". É a base
+  de confiar (ou não) num PR de dependência.
 
 ### Staging
 - **O que é:** a camada de **limpeza** do dbt — um modelo por fonte (rename, cast, dedup básico),
