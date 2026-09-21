@@ -1,0 +1,9 @@
+venv/
+.git/
+__pycache__/
+*.pyc
+*.duckdb
+criptoflow_dbt/target/
+criptoflow_dbt/dbt_packages/
+logs/
+.env
