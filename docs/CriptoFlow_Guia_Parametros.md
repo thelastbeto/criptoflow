@@ -150,7 +150,29 @@ volumes:
 - **Pine as tags** das imagens (reprodutibilidade — a lição do pyarrow, agora na infra).
 - **`user`** resolve permissão de volume montado, mas mexe em quem "é" o processo — use com o `:0` (grupo root) pra manter os arquivos internos graváveis.
 
-### Melhorias possíveis no nosso compose (candidatas)
-- Adicionar `healthcheck` no MinIO/Postgres e `depends_on: condition: service_healthy` no Airflow.
-- Trocar `_PIP_ADDITIONAL_REQUIREMENTS` por uma **imagem própria** do Airflow (Dockerfile).
-- Avaliar `env_file` pra reduzir a repetição de `${VAR}`.
+### Melhorias no nosso compose — status
+
+**Rodada 1 (aplicadas ✅):**
+- `healthcheck` no MinIO/Postgres + `depends_on: condition: service_healthy` no Airflow — mata o erro de conexão no boot.
+- Imagem própria do Airflow (`build` + Dockerfile) no lugar do `_PIP_ADDITIONAL_REQUIREMENTS` — mata o boot lento.
+- `restart: unless-stopped` nos serviços — resiliência a crash/reboot.
+- `env_file` — **descartado** por ora (pouca repetição de `${VAR}` não justifica).
+
+**Rodada 2 — rede, build e backup (avaliação):**
+
+Aplicadas ✅:
+- **`.dockerignore`** — tira `venv/`, `.git/`, `*.duckdb`, `target/`, `logs/`, `.env` do build context.
+  Build mais rápido e leve (o Docker não empacota lixo pra mandar ao daemon).
+- **Bind de portas em `127.0.0.1`** — publica só no loopback; **fecha a exposição na LAN** (comprovado com
+  `Test-NetConnection`: era `True`, virou `False` de fora, segue `True` no localhost). Não afeta a
+  comunicação entre containers (que usam o nome do serviço na rede Docker).
+
+Descartadas — over-engineering **aqui** ❌:
+- **Multi-stage build** — brilha quando há artefato a *compilar e descartar*; nossa imagem só faz
+  `pip install` sobre a oficial do Airflow → ganho ~zero. (Conhecimento de bolso, não implementação.)
+- **Backup automático de volumes** — nossos dados são **reproduzíveis por design** (bronze idempotente,
+  silver/gold derivadas); o "backup" do lake é o próprio pipeline. Valeria em produção com dado irrecuperável.
+
+Já bom, nada a fazer:
+- **Cache de camadas** — o `Dockerfile.airflow` já ordena `COPY requirements → pip install` (as libs ficam
+  numa camada cacheada; só rebuilda quando o requirements muda).

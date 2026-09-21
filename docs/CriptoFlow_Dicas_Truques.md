@@ -81,6 +81,21 @@
   o commit inteiro, não só a mensagem).
 - `git push --force-with-lease` → força o envio depois de reescrever história (amend/reset), **recusando**
   se o remoto tiver algo que você não tem (mais seguro que `--force` seco). **Nunca** na `main`.
+- **Fechar issue automaticamente no merge:** escreva `Closes #19` (número **exato, sem `< >`**) — de
+  preferência na **descrição da PR** (mais confiável que no commit). Palavras válidas: `Closes`, `Fixes`,
+  `Resolves`. ⚠ Armadilha real: `Closes #<19>` **não funciona** — os `< >` quebram o parse; tem que ser `Closes #19`.
+- **Testar um PR localmente:** `git fetch origin` + `git checkout <branch-do-PR>` (branches do mesmo repo,
+  ex.: Dependabot, aparecem em `origin/...` — o checkout recria a local rastreando).
+- `git fetch origin pull/<N>/head:pr-<N>` → baixa **qualquer** PR (inclusive de **fork**) numa branch
+  local `pr-<N>`. É o que o `gh pr checkout <N>` faz por baixo.
+- `@dependabot rebase` (comentário no PR) → atualiza a branch do PR do Dependabot com a `main` atual.
+  **Sempre** faça isso antes de testar/mergear um PR atrasado (senão testa código velho).
+- `git rm --cached <arquivo>` → para de rastrear o arquivo **sem apagar do disco** (pra desversionar
+  artefato gerado que entrou por engano, ex.: `*.duckdb`). Depois adicione ao `.gitignore`.
+- `git restore --staged <arquivo>` → tira do stage (desfaz o `git add`), mantendo as mudanças.
+- **venv descartável** (testar sem sujar seu ambiente): `python3 -m venv /tmp/venv-teste && source
+  /tmp/venv-teste/bin/activate` → testa → `deactivate && rm -rf /tmp/venv-teste`. Seu venv de trabalho
+  nunca é tocado — e um venv limpo **revela dependência instalada "na mão"** que faltou no `requirements.txt`.
 - `git stash` → guarda as mudanças não commitadas "numa gaveta" e limpa o working tree; `git stash pop`
   traz de volta. Útil pra trocar de branch ou dar `pull` sem carregar as mudanças.
 
@@ -105,6 +120,12 @@
   `MINIO_ROOT_PASSWORD: ${MINIO_SECRET}`.) Commite um `.env.example` só com os nomes das variáveis.
 - Injetar segredo/config do host no container: `MINHA_VAR: ${MINHA_VAR}` no `environment:` do serviço
   (puxa do `.env`) — porque o container **não** carrega o `.env` sozinho.
+- **Testar se uma porta está exposta na LAN:** ache seu IP (`ipconfig` → IPv4, ex.: `192.168.100.181`) e,
+  no **PowerShell**, `Test-NetConnection <IP-da-LAN> -Port <porta>` (alias `tnc`). `TcpTestSucceeded: True`
+  = exposta na rede. Contra `127.0.0.1` = acesso local; contra o IP da LAN = exposição. **`ping` não testa
+  porta** — só se o host responde. (É comando do PowerShell, não do CMD.)
+- **Fechar a porta pra LAN:** `ports: ["127.0.0.1:5433:5432"]` — escuta só no loopback (host acessa, rede
+  não). Não afeta a comunicação entre containers. Ver Conceitos A.26.
 
 ## Airflow
 - Pegar a senha do admin (modo standalone):

@@ -6,7 +6,7 @@
 > **Formato de cada entrada:** Sintoma (mensagem) → Causa → Correção → Lição.
 >
 > Ambiente de referência: Windows + WSL2 (Ubuntu), Docker Desktop, Python 3.x, Postgres 16.
-> Última atualização: 2026-09-16.
+> Última atualização: 2026-09-17.
 
 ---
 
@@ -859,3 +859,51 @@ git commit -m "mensagem nova"
 ### Lição que fica
 - Git raramente exige "recomeçar": `amend` corrige o último commit; `reset --soft` desfaz mantendo o
   trabalho. Reescrever história é seguro **só antes do merge e só na sua branch**.
+
+---
+
+## PR de dependência "quebra" no teste local — branch atrasada (falso negativo)
+
+> **Resumo:** você testa um PR (ex.: do Dependabot) localmente e algo quebra que **não tem relação** com
+> a dependência. Causa provável: a branch do PR está **atrasada** em relação à `main` — você está testando
+> **código velho**.
+
+### Como reconhecer
+- O erro é de algo que você **já corrigiu** na `main` (no nosso caso, o MinIO caiu pelo `${MINIO_PASSWORD}`
+  antigo — bug que a `main` já não tinha).
+- `git log --oneline` da branch do PR **não tem** os commits recentes da `main`.
+
+### Por que acontece
+- Uma branch de PR é um **retrato de quando foi criada**. Se a `main` andou pra frente, a branch fica
+  atrás — testá-la mistura **código velho + a mudança nova** (falso negativo).
+
+### Solução
+- Atualize a branch do PR com a `main` **antes** de testar: no Dependabot, comente `@dependabot rebase`
+  (ou "Update branch" no PR). Depois `git fetch origin` + `checkout` da branch, e `git log --oneline -6`
+  pra confirmar que os commits da `main` entraram.
+
+### Lição que fica
+- **Antes de testar/mergear um PR, atualize a branch com a `main`.** Senão o teste é inválido.
+
+---
+
+## `dbt: command not found` (ou lib faltando) num ambiente limpo
+
+> **Resumo:** num venv novo, um comando/lib que "sempre funcionou" não existe. Causa: a dependência
+> estava instalada só **"na mão"** no venv de trabalho, mas **não declarada** no `requirements.txt`.
+
+### Como reconhecer
+- `Command 'dbt' not found` (ou `ImportError`) num venv recém-criado, mesmo tendo feito `pip install -r requirements.txt`.
+- `grep -i <lib> requirements.txt` **não acha**; `pip show <lib>` no venv de trabalho **acha**.
+
+### Por que acontece
+- Alguém instalou a lib manualmente no venv de trabalho e esqueceu de adicionar ao `requirements.txt`.
+  O venv de trabalho "funciona"; um ambiente limpo (CI, máquina nova, venv descartável) não.
+
+### Solução
+- Adicione a lib **pinada** ao `requirements.txt` (ex.: `dbt-duckdb==1.11.0`). Valide num venv limpo:
+  `pip install -r requirements.txt` → o comando funciona.
+
+### Lição que fica
+- **Teste em ambiente limpo revela dependência fantasma.** Ambiente reproduzível = **tudo declarado,
+  nada instalado na mão** (ver Conceitos A.25).
