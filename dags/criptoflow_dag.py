@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
@@ -17,7 +17,14 @@ with DAG(
     start_date=datetime(2026, 1, 1),
     catchup=False,                   # não reprocessa o passado ao ligar
     tags=["criptoflow"],
-    default_args={"on_failure_callback": alerta_falha}
+    dagrun_timeout=timedelta(hours=1),          # o run inteiro não passa de 1h
+    default_args={
+        "on_failure_callback": alerta_falha,
+        "retries": 3,                            # tenta 3x antes de falhar de vez
+        "retry_delay": timedelta(minutes=2),     # espera 2min entre tentativas
+        "retry_exponential_backoff": True,       # 2 → 4 → 8min (dá tempo do 429 passar)
+        "execution_timeout": timedelta(minutes=15),  # mata a TASK travada em 15min
+    },
 ) as dag:
 
     t_bronze = PythonOperator(
