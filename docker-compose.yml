@@ -16,6 +16,7 @@ services:
     restart: unless-stopped
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro
 
   minio:
     image: minio/minio
@@ -39,6 +40,8 @@ services:
     command: standalone
     user: "1000:0"
     environment:
+      AIRFLOW__CORE__EXECUTOR: "LocalExecutor"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow"
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       MINIO_ENDPOINT: "http://minio:9000"
       DBT_S3_ENDPOINT: "minio:9000"        # endereço "de dentro do prédio"
