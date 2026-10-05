@@ -1,5 +1,23 @@
 name: criptoflow
 
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  user: "1000:0"
+  environment:
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__EXECUTOR: "LocalExecutor"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow"
+    AIRFLOW__WEBSERVER__SECRET_KEY: "${AIRFLOW_SECRET_KEY}"   # sessão estável (sem CSRF a cada restart)
+    MINIO_ENDPOINT: "http://minio:9000"
+    DBT_S3_ENDPOINT: "minio:9000"
+    PYTHONPATH: "/opt/airflow/project"
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./:/opt/airflow/project
+    - /home/betet/.dbt:/home/airflow/.dbt:ro
+
 services:
   postgres:
     image: postgres:16
@@ -33,30 +51,7 @@ services:
     restart: unless-stopped
     volumes:
       - miniodata:/data
-  airflow:
-    build:
-      context:  .
-      dockerfile: Dockerfile.airflow
-    command: standalone
-    user: "1000:0"
-    environment:
-      AIRFLOW__CORE__EXECUTOR: "LocalExecutor"
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow"
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      MINIO_ENDPOINT: "http://minio:9000"
-      DBT_S3_ENDPOINT: "minio:9000"        # endereço "de dentro do prédio"
-      PYTHONPATH: "/opt/airflow/project"           # pra achar bronze.py, silver.py...
-    ports: ["127.0.0.1:8080:8080"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    restart: unless-stopped
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./:/opt/airflow/project
-      - /home/betet/.dbt:/home/airflow/.dbt:ro
+
     
   kafka:
     image: apache/kafka:3.9.0
@@ -74,6 +69,43 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    command: >
+      bash -c "airflow db migrate &&
+      (airflow users create --role Admin --username admin
+      --password '${AIRFLOW_ADMIN_PASSWORD}'
+      --firstname Roberto --lastname Junior --email admin@criptoflow.local
+      || true)"
+    restart: "no"                 # roda uma vez e morre (não é serviço)
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully 
+      minio:
+        condition: service_healthy                  
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports: ["127.0.0.1:8080:8080"]
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
 volumes:
   pgdata:
