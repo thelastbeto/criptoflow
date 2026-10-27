@@ -3,6 +3,9 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 from bronze import executar as executar_bronze
+import os
+from airflow.hooks.base import BaseHook
+from airflow.models import Variable
 
 def alerta_falha(context):
     ti = context["task_instance"]
