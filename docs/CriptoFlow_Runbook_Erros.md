@@ -907,3 +907,99 @@ git commit -m "mensagem nova"
 ### Lição que fica
 - **Teste em ambiente limpo revela dependência fantasma.** Ambiente reproduzível = **tudo declarado,
   nada instalado na mão** (ver Conceitos A.25).
+
+---
+
+## `Permission denied` ao criar arquivo numa pasta de bind mount
+
+> **Resumo:** você não consegue criar/escrever um arquivo numa pasta do **próprio projeto** (ex.: `db-init/`),
+> mesmo sendo o dono do repo. Causa: a pasta foi **criada pelo Docker, como `root`**, porque o mount
+> `./db-init:/...` foi adicionado ao compose **antes** de a pasta existir.
+
+### Como reconhecer
+- `-bash: db-init/arquivo.sql: Permission denied` ao fazer `echo ... > db-init/arquivo.sql`.
+- `ls -ld db-init` mostra dono **`root root`** (e não o seu usuário).
+- `sudo echo ... > arquivo` **também** falha (ver "por que" abaixo).
+
+### Por que acontece
+- Quando o compose tem `./x:/...` e a pasta `./x` **não existe**, o Docker a cria sozinho ao subir —
+  **com dono `root`** (o daemon roda como root). Aí seu usuário não escreve dentro dela.
+- O `sudo echo ... > arquivo` falha porque o **`>` (redirecionamento) é feito pelo seu shell** (seu
+  usuário), não pelo `sudo`. O sudo eleva só o `echo`; quem cria o arquivo é o `>`.
+
+### Solução
+```bash
+sudo chown -R $USER:$USER db-init        # devolve a pasta pro seu usuario
+echo "..." > db-init/arquivo.sql          # agora escreve normal
+```
+Alternativa pra escrever num local de root sem mudar dono: `echo "..." | sudo tee db-init/arquivo.sql`.
+
+### Verificação
+- `ls -ld db-init` agora mostra **seu usuário** como dono; o `echo >` funciona sem sudo.
+
+### Lições que ficam
+- **Docker + "permission denied" = suspeite de dono `root`** em algo que o Docker criou (primo do `user: "1000:0"`).
+- **Crie a pasta de bind mount antes de subir o compose** (ou conserte o dono depois com `chown`).
+- `sudo cmd > arquivo` não escreve como root — use `cmd | sudo tee arquivo`.
+
+---
+
+## `exit 2` no `airflow-init` — comando multi-linha quebrado pelo YAML `>`
+
+> **Resumo:** um `command` multi-linha com `>` (ex.: o `airflow-init`) falha porque o bash recebeu o comando
+> em **várias linhas** em vez de uma. Causa: no `>` (folded scalar), linhas de continuação **indentadas a
+> mais** que a primeira têm o newline **preservado** (não viram espaço).
+
+### Como reconhecer
+- Logs com `/bin/bash: line N: --flag: command not found` e `syntax error near unexpected token`.
+- O programa reclama de **argumentos faltando** (recebeu só o começo do comando — ex.: `airflow users create`
+  sem `--email/--firstname/--lastname`).
+- O serviço sai com código != 0 (ex.: `exit 2`).
+
+### Por que acontece
+- O `>` dobra newline→espaço **só entre linhas na mesma indentação**. Uma linha **mais indentada** é tratada
+  como "bloco mais indentado" e o newline é **mantido** → vira comando multi-linha.
+
+### Solução
+- Alinhar **todas** as linhas de continuação na mesma coluna da primeira; ou pôr o comando numa **linha só**.
+- Conferir com `docker compose config` (mostra o `command` já dobrado numa linha).
+
+### Lição que fica
+- `>` = junta com espaço (**indentação alinhada obrigatória**); `|` = mantém os newlines de propósito.
+- Na dúvida de como o YAML interpretou, **`docker compose config`** revela.
+
+---
+
+## Airflow: "Invalid login" mesmo com a senha certa (admin criado antes com outra senha)
+
+> **Resumo:** o login na UI dá *Invalid login* mesmo passando o usuário/senha corretos do `.env`. Causa:
+> o admin foi criado **antes** (ex.: no `standalone`, com senha **aleatória**), e o `airflow users create`
+> **não atualiza** um usuário que já existe — o `|| true` do init **engole** o "already exist", então a
+> senha nova nunca é aplicada.
+
+### Como reconhecer
+- UI responde *Invalid login* com credenciais que você sabe que estão certas.
+- Log do `airflow-init` mostra **`admin already exist in the db`**.
+- A senha está certa no `.env`, mas não funciona.
+
+### Por que acontece
+- `airflow users create` é **create-only** (não faz upsert). Com `|| true`, se o usuário já existe ele é
+  **pulado em silêncio** → a senha continua a do **primeiro** create (no standalone, é aleatória).
+
+### Solução
+Apagar e recriar com a senha conhecida (num container **de pé** — o scheduler):
+```bash
+docker compose exec airflow-scheduler airflow users delete --username admin
+docker compose exec airflow-scheduler airflow users create \
+  --role Admin --username admin --password <senha> \
+  --firstname <nome> --lastname <sobrenome> --email <email>
+```
+Passe `--password` **direto** (sem `${VAR}`) pra não depender de aspas no `.env`.
+
+### Verificação
+- `docker compose exec airflow-scheduler airflow users list` → o admin aparece; o login funciona.
+
+### Lições que ficam
+- `airflow users create` **não atualiza** — mudar `AIRFLOW_ADMIN_PASSWORD` no `.env` depois **não pega**
+  (o usuário já existe). Pra robustez: reset de senha no init, ou as env `_AIRFLOW_WWW_USER_*` do entrypoint.
+- **Aspas em `.env`** (`VAR="x"`) são fonte de confusão — o Compose v2 costuma remover, mas evite.
