@@ -5,7 +5,7 @@
 > **B) Dicionário de expressões** — termos novos, no formato *O que é* + *O que avalia* (o que a
 > pergunta testa numa entrevista ou o que a escolha comunica na prática).
 >
-> Novos termos são adicionados em ordem alfabética. Última atualização: 2026-09-17.
+> Novos termos são adicionados em ordem alfabética. Última atualização: 2026-10-04.
 
 ---
 
@@ -616,6 +616,57 @@ pela porta publicada. O bind loopback só muda quem, **de fora**, pode entrar.
 **Nuance:** o `0.0.0.0` só *escuta*; se outro PC realmente conecta depende também do firewall do host.
 Mas não conte com o firewall como única guarda — o `127.0.0.1` fecha a porta na estrutura. Ver verbete *Bind*.
 
+### A.27 — Como o Airflow cria e gerencia o schema do banco (migrations)
+
+**A dúvida:** rodamos só `CREATE DATABASE airflow` (um banco **vazio**). De onde vieram as ~30 tabelas
+(`dag_run`, `task_instance`…)?
+
+**Resposta: o Airflow criou o schema sozinho, via migrations.** São dois papéis diferentes:
+- **Criar o *banco*** (`CREATE DATABASE airflow`) → um espaço vazio. Responsabilidade sua (ou do Postgres).
+- **Criar o *schema*** (as tabelas dentro do banco) → responsabilidade do **Airflow**.
+
+**O comando que cria o schema é `airflow db migrate`.** Por baixo, o Airflow usa o **Alembic** (migração de
+schema): traz scripts de migração **versionados** e o `db migrate` aplica todos em ordem, deixando o banco
+no schema da sua versão. Banco vazio → **cria todas as tabelas**; banco de versão antiga → **atualiza** o
+schema (é assim que se sobe de versão sem perder dados). A tabela `alembic_version` guarda em que migração
+o banco está (dá pra ver no DBeaver).
+
+**Quem chamou o `db migrate`?** O **`airflow standalone`** faz isso **automaticamente** ao subir: roda
+`db migrate` (cria/atualiza o schema), cria o usuário admin **e** sobe os componentes — três coisas num
+comando só. É a "mágica" do modo dev.
+
+**E em produção?** A mágica some — cada coisa é feita **explicitamente**. Por isso o passo de separar
+serviços terá um container **`airflow-init`** que roda `airflow db migrate` + cria o admin **antes** do
+scheduler/webserver subirem. Separar "preparar o banco" de "rodar o serviço" é o padrão de produção.
+
+**Detalhe:** `airflow db migrate` é **idempotente** — rodar de novo num banco atualizado não faz nada. Por
+isso o `airflow-init` pode rodar a cada subida sem medo.
+
+**Relaciona:** A.13 (rede/serviços Docker) e o passo de separação de serviços (Guia — Airflow).
+
+### A.28 — Resiliência: Compose × Orquestrador (e os dois sentidos de "orquestração")
+
+**Dois níveis de recuperação:**
+- **Docker/Compose (uma máquina):** o `restart` sobe o container que **morreu** (crash/reboot); o
+  `healthcheck` só **reporta** `healthy`/`unhealthy` — o Compose puro **não age** sobre "doente mas de pé".
+- **Orquestrador de containers (Kubernetes, Swarm, Nomad, ECS):** **age** sobre a saúde — reinicia quando a
+  probe falha, reagenda em outro nó se a máquina cai, mantém N réplicas, faz rolling update.
+
+O healthcheck é o **termômetro**; o orquestrador é o **médico** que age sobre ele.
+
+**No Kubernetes, duas "saúdes" distintas:**
+- **Liveness probe** — "está vivo?" Falhou → **mata e reinicia** o container.
+- **Readiness probe** — "pronto pra receber tráfego?" Falhou → **tira do balanceador** (para de rotear), sem matar.
+
+O mesmo `/health` do seu `healthcheck` é reaproveitado como probe no K8s — escrever healthcheck bom hoje é investimento.
+
+**Armadilha de vocabulário — "orquestração" tem DOIS sentidos:**
+- **Airflow** orquestra **workflows/tasks** (a ordem `bronze → dbt`).
+- **Kubernetes** orquestra **containers** (sobe/reinicia/escala/agenda).
+
+Mesma palavra, **camadas diferentes**. E o **Compose não é orquestrador** — é um executor multi-container de
+uma máquina só. (Relaciona: `restart`/`healthcheck` no Guia; passo futuro de K8s/KubernetesExecutor.)
+
 ---
 
 ## Parte B — Dicionário de expressões
@@ -898,6 +949,13 @@ Mas não conte com o firewall como única guarda — o `127.0.0.1` fecha a porta
 - **O que avalia:** se você domina joins — juntar dados de fontes diferentes por chave e escolher o tipo
   certo conforme o que precisa ser preservado. (Ex.: `how="left"` mantém tudo da esquerda.)
 
+### Migration (de schema)
+- **O que é:** mudança **versionada** na estrutura do banco (criar/alterar tabelas), aplicada por uma
+  ferramenta que rastreia o que já rodou (ex.: **Alembic**, usado pelo Airflow via `airflow db migrate`).
+  Leva o banco de um estado de schema a outro, de forma repetível e **idempotente**.
+- **O que avalia:** se você entende como o schema **evolui de forma controlada** (versionado, idempotente)
+  em vez de rodar `CREATE TABLE` na mão a cada mudança.
+
 ### Object Storage
 - **O que é:** modelo de armazenamento que guarda dados como **objetos** (arquivo + metadados + um
   ID/chave único) num espaço plano organizado em *buckets*, acessível via API HTTP. Diferente de sistema
@@ -946,6 +1004,13 @@ Mas não conte com o firewall como única guarda — o `127.0.0.1` fecha a porta
   quê, e o que mudar pra não repetir. Emprestado da cultura DevOps/SRE.
 - **O que avalia:** maturidade de confiabilidade — **aprender com a falha** (documentar, melhorar) em vez
   de caçar culpado. (O seu runbook é primo disso.)
+
+### Probe (liveness / readiness)
+- **O que é:** checagem de saúde que um **orquestrador** (ex.: Kubernetes) roda contra um container.
+  **Liveness** = se falha, reinicia o container; **Readiness** = se falha, para de rotear tráfego até ficar
+  pronto. É o `healthcheck` do Docker levado a um nível que **age**, não só reporta.
+- **O que avalia:** se você distingue "reiniciar quando morreu" (liveness) de "só mandar tráfego quando
+  pronto" (readiness) — e entende que o healthcheck do Compose é o mesmo conceito, sem o ator que age.
 
 ### S3
 - **O que é:** Amazon Simple Storage Service, o serviço de object storage da AWS (de 2006). Virou o

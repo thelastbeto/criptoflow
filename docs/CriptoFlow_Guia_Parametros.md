@@ -176,3 +176,80 @@ Descartadas — over-engineering **aqui** ❌:
 Já bom, nada a fazer:
 - **Cache de camadas** — o `Dockerfile.airflow` já ordena `COPY requirements → pip install` (as libs ficam
   numa camada cacheada; só rebuilda quando o requirements muda).
+
+---
+
+# Airflow
+
+## Config necessária (o que usamos hoje)
+
+Imagem própria (`Dockerfile.airflow`), `command: standalone`, `user: "1000:0"`, `AIRFLOW__CORE__LOAD_EXAMPLES=false`,
+e bind mounts de `dags/`, do projeto e do `~/.dbt`.
+**Estado confirmado (via `airflow config get-value`):** `SequentialExecutor` + `sqlite:////opt/airflow/airflow.db`
+— e o `/opt/airflow` **não** tem volume, então o metadado é **efêmero** (perde histórico ao recriar).
+
+## Parâmetros-chave (os "botões")
+
+| Parâmetro | O que faz | Quando/como usar |
+|---|---|---|
+| `AIRFLOW__CORE__EXECUTOR` | Como as tasks são executadas | `SequentialExecutor` (1 por vez, só SQLite) → dev; `LocalExecutor` (paralelo, 1 máquina) → o passo natural; `Celery`/`Kubernetes` → distribuído |
+| `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN` | Banco de **metadados** (histórico, conns, vars) | SQLite (dev/efêmero) × **Postgres** (real/persistente) |
+| `AIRFLOW__CORE__PARALLELISM` | Máx de tasks simultâneas no **todo** | Padrão 32; só importa com executor paralelo |
+| `AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG` | Máx de tasks simultâneas **por DAG** | Conter um DAG "faminto" |
+| `AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG` | Quantos runs do mesmo DAG ao mesmo tempo | Evitar sobreposição (run das 10h e 11h juntas) |
+| `AIRFLOW__CORE__LOAD_EXAMPLES` | Carrega DAGs de exemplo | `false` (você já fez) |
+| **DAG:** `schedule` | Cadência (cron ou `@hourly`…) | Você usa `@hourly` |
+| **DAG:** `start_date` + `catchup` | A partir de quando + se reprocessa o passado | `catchup=False` evita enxurrada de runs antigos |
+| **DAG:** `dagrun_timeout` | Mata o **run** inteiro se passar do tempo | Evita run pendurado |
+| **Task (`default_args`):** `retries` + `retry_delay` | Tentativas em falha transitória + espera entre elas | **Faltando hoje** — alto valor |
+| **Task:** `retry_exponential_backoff` | Aumenta a espera a cada retry | Bom pra rate limit (429) |
+| **Task:** `execution_timeout` | Mata a **task** se passar do tempo | API pendurada não trava o pipeline |
+| **Task:** `on_failure_callback` | Roda função em falha (alerta) | Você já usa (`alerta_falha`) |
+| **Task:** `depends_on_past` | Só roda se o run anterior teve sucesso | Útil em carga incremental |
+| Connections & Variables | Credenciais/config gerenciadas (UI/CLI/env) | Alternativa ao hardcode via env do compose |
+
+## Alternativas e comportamentos
+
+**Executor.** `SequentialExecutor` (uma task por vez, exige SQLite) × `LocalExecutor` (paralelo, processos
+numa máquina, exige Postgres) × `Celery`/`Kubernetes` (workers distribuídos).
+- *Sequential* → simples, dev; **zero paralelismo**.
+- *Local* → paralelo numa máquina só, "produção numa caixa"; o degrau natural.
+- *Celery/K8s* → escala horizontal, mas exige broker/cluster — over pra solo/local.
+
+**Banco de metadados.** SQLite (default do standalone) × Postgres.
+- *SQLite* → zero setup, mas **single-writer** (força o SequentialExecutor) e, no seu caso, **efêmero**.
+- *Postgres* → persistente, multi-writer (habilita o LocalExecutor). **Você já tem um Postgres ocioso** pronto pra isso.
+
+**`standalone` × componentes separados.** `standalone` sobe scheduler + webserver + triggerer num processo
+só (dev). Em produção, cada um vira um serviço escalado à parte.
+
+**Connections/Variables × env.** Env no compose é simples (você usa). Connections/Variables são o jeito
+nativo: criptografadas no metadado, editáveis na UI/CLI, sem espalhar segredo pelo YAML.
+
+**`retries`.** Sem → uma falha transitória mata o run. Com → tenta de novo sozinho (resiliência).
+
+## Trade-offs (resumo de senior)
+
+- **SQLite+Sequential é dev; Postgres+Local é "produção numa máquina".** É o salto de maior retorno.
+- **`retries` é resiliência barata** — quase sempre vale, custa uma linha.
+- **Timeouts** (`execution_timeout`/`dagrun_timeout`) evitam o pior silencioso: o pipeline pendurado.
+- **Celery/K8s e separar serviços** só quando a escala pedir — pra solo/local é over.
+- **Connections/Variables** ganham valor com muitos segredos/ambientes; pra 1 dev local, env resolve.
+
+### Melhorias no nosso Airflow — roadmap (objetivo: simular produção)
+
+> **Decisão do Larry:** o objetivo do projeto não é só *rodar* o pipeline, é **aprender a simular produção**
+> (portfólio/carreira). Sob esse objetivo, "separar serviços" e "Connections/Variables" **deixam de ser
+> over-engineering** — são o ponto. A disciplina que fica: fazer **na ordem certa** (cada peça tem
+> pré-requisito) e sabendo **por que** cada uma existe (pra defender em entrevista).
+
+1. ✅ **`retries` + `retry_delay` + timeouts** — resiliência, custo mínimo. (nível DAG)
+2. ✅ **`LocalExecutor` + backend Postgres** — metadado persistente + paralelismo. **Pré-requisito do passo 3.**
+3. ✅ **Separar o `standalone` em serviços** — `airflow-init` (db migrate + criar admin) + `scheduler` +
+   `webserver` (+ `triggerer`). Topologia production-like. *(Exige o passo 2: processos separados não
+   compartilham SQLite.)*
+4. ✅ **Connections & Variables** — tirar config/segredo (MinIO, dbt) do env hardcoded pro **sistema nativo**
+   do Airflow (criptografado, gerenciável na UI/CLI).
+5. 🔵 **Futuro — `CeleryExecutor` (broker Redis/RabbitMQ + workers) → `KubernetesExecutor`** — quando houver
+   uma **carga pesada** que justifique distribuir. Fazer *com motivo*: "distribuí quando precisei processar X"
+   é resposta forte; "coloquei Celery sem carga" é fraca.

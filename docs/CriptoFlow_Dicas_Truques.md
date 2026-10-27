@@ -115,6 +115,11 @@
 - Volume **nomeado** (declara em `volumes:`) × **bind mount** (`./x`, não declara).
 - `Permission denied` em volume montado → uid do container ≠ dono do arquivo no host.
   Fix padrão: `user: "$(id -u):0"` no serviço.
+- **Docker cria pasta de bind mount inexistente como `root`.** Se você põe `./x:/...` no compose e a pasta
+  `./x` não existe, o Docker cria ela **como root** ao subir → depois você toma `Permission denied` pra
+  escrever nela. Fix: `sudo chown -R $USER:$USER ./x` (ou crie a pasta **antes** de subir).
+- `sudo cmd > arquivo` **não** escreve como root — o `>` é feito pelo **seu shell** (seu usuário), não pelo
+  sudo. Pra escrever em local de root: `cmd | sudo tee arquivo` (o `tee` roda elevado).
 - **Segredos no `docker-compose.yml`?** Troque valores fixos por `${VAR}` — o compose lê automaticamente
   o `.env` da pasta e substitui na subida. Assim o arquivo versionado não tem segredo. (Ex.:
   `MINIO_ROOT_PASSWORD: ${MINIO_SECRET}`.) Commite um `.env.example` só com os nomes das variáveis.
@@ -126,6 +131,14 @@
   porta** — só se o host responde. (É comando do PowerShell, não do CMD.)
 - **Fechar a porta pra LAN:** `ports: ["127.0.0.1:5433:5432"]` — escuta só no loopback (host acessa, rede
   não). Não afeta a comunicação entre containers. Ver Conceitos A.26.
+- **Scripts em `/docker-entrypoint-initdb.d` (imagem do Postgres)** rodam automaticamente **só em volume
+  novo/vazio**; num volume que já tem dados, são **pulados**. Use pra bootstrap reproduzível (ex.:
+  `CREATE DATABASE x`). Pro volume que já existe, rode o comando **uma vez na mão** — os dois juntos deixam
+  o setup reprodutível. Monte com `:ro` (o container só lê os scripts).
+- **YAML `>` (folded scalar) junta as linhas trocando newline por espaço — mas SÓ se as continuações
+  estiverem na MESMA indentação da primeira.** Linha indentada **a mais** → o newline é **preservado** (o
+  comando vira multi-linha e quebra). Alinhe todas, ou ponha numa linha só. (`|` preserva os newlines de
+  propósito.) `docker compose config` mostra como ficou dobrado.
 
 ## Airflow
 - Pegar a senha do admin (modo standalone):
