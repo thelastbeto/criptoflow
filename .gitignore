@@ -5,3 +5,5 @@ __pycache__/
 *.ipynb
 logs/
 CLAUDE.md
+# mockups locais (HTML): a cópia durável fica no Notion
+mockups/
