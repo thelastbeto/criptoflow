@@ -26,12 +26,16 @@ Config (codigo.yml):
       Uma frase sobre a mudança.
     trechos:
       - arquivo: scripts/exemplo.py
-        ancora: "def parear"            # texto de uma linha ALTERADA do trecho
+        ancora: "def parear"            # texto de UMA linha alterada (tem que ser única no arquivo)
         porque: |
           Por que esse trecho existe.
       - arquivo: requirements.txt       # sem âncora = porquê do arquivo inteiro
         porque: |
           ...
+
+Um porquê por trecho aparece acima da tabela. Várias âncoras no mesmo trecho (ex.: um
+arquivo novo, que o git mostra como um trecho só) viram um passeio comentado: cada porquê
+aparece logo antes da sua linha.
 """
 import argparse
 import html
@@ -60,7 +64,7 @@ class ErroMockup(Exception):
 
 # --- Modelo do diff: Arquivo -> Trecho -> Linha ----------------------------
 
-@dataclass
+@dataclass(eq=False)          # eq=False: comparação por identidade (dá pra usar como chave de dict)
 class Linha:
     tipo: str                 # " " contexto, "-" removida, "+" adicionada
     texto: str
@@ -68,7 +72,7 @@ class Linha:
     num_novo: int | None
 
 
-@dataclass(eq=False)          # eq=False: comparação por identidade (dá pra usar como chave de dict)
+@dataclass(eq=False)
 class Trecho:
     inicio_antigo: int
     inicio_novo: int
@@ -368,8 +372,9 @@ def carregar_config(caminho):
 def atribuir_porques(arquivos, itens):
     """Liga cada trecho do diff ao seu porquê.
 
-    Devolve (porques_de_arquivo, porques_de_trecho, avisos). Config que não bate
-    com o diff (arquivo fora do diff, âncora sem par ou ambígua, porquê
+    Devolve (porques_de_arquivo, porques_de_trecho, avisos). porques_de_trecho
+    mapeia trecho -> [(linha_da_ancora, porque)], na ordem das linhas. Config que
+    não bate com o diff (arquivo fora do diff, âncora sem par ou ambígua, porquê
     duplicado) é erro: sinal de que a config ficou desatualizada.
     """
     por_caminho = {}
@@ -390,17 +395,22 @@ def atribuir_porques(arquivos, itens):
                 erros.append(f"{arq.caminho}: dois porquês para o arquivo inteiro.")
             de_arquivo[arq] = item["porque"]
             continue
-        casados = [t for t in arq.trechos if any(ancora in linha.texto for linha in t.alteradas())]
-        if not casados:
+        casadas = [(t, linha) for t in arq.trechos for linha in t.alteradas() if ancora in linha.texto]
+        if not casadas:
             erros.append(f"{arq.caminho}: a âncora {ancora!r} não aparece em nenhuma linha alterada.")
-        elif len(casados) > 1:
-            erros.append(f"{arq.caminho}: a âncora {ancora!r} é ambígua (aparece em {len(casados)} trechos).")
-        elif casados[0] in de_trecho:
-            erros.append(f"{arq.caminho}: dois porquês para o trecho {casados[0].rotulo}.")
+        elif len(casadas) > 1:
+            erros.append(f"{arq.caminho}: a âncora {ancora!r} é ambígua "
+                         f"(aparece em {len(casadas)} linhas alteradas).")
         else:
-            de_trecho[casados[0]] = item["porque"]
+            trecho, linha = casadas[0]
+            if any(ja is linha for ja, _ in de_trecho.get(trecho, [])):
+                erros.append(f"{arq.caminho}: dois porquês para a mesma linha ({ancora!r}).")
+            else:
+                de_trecho.setdefault(trecho, []).append((linha, item["porque"]))
     if erros:
         raise ErroMockup("\n".join(erros))
+    for trecho, porques in de_trecho.items():
+        porques.sort(key=lambda par: trecho.linhas.index(par[0]))
 
     avisos = []
     for arq in arquivos:
@@ -478,6 +488,10 @@ table.codigo td.adicionada { background: rgba(46,160,67,.15); }
 table.codigo td.num.adicionada { background: rgba(46,160,67,.28); color: var(--verde); }
 table.codigo td.vazio { background: repeating-linear-gradient(135deg, transparent 0 6px,
                         rgba(110,118,129,.08) 6px 12px); }
+table.codigo tr.porque-linha td { padding: 10px 12px; background: var(--cartao);
+                                  font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+                                  white-space: normal; }
+table.codigo tr.porque-linha .porque { margin: 0; }
 footer { margin-top: 36px; text-align: center; font-size: 12px; color: var(--suave); }
 """
 
@@ -539,11 +553,16 @@ def _celulas(linha, lado, arq):
     return f'<td class="num {classe}">{num}</td><td class="cod {classe}">{codigo}</td>'
 
 
-def _tabela(trecho, arq):
-    linhas = "".join(
-        f"<tr>{_celulas(esq, 'antigo', arq)}{_celulas(dir_, 'novo', arq)}</tr>"
-        for esq, dir_ in parear(trecho)
-    )
+def _tabela(trecho, arq, no_meio):
+    """Monta a tabela lado a lado; `no_meio` = {linha: porque} a exibir logo antes da linha."""
+    linhas = []
+    for esq, dir_ in parear(trecho):
+        for linha in (esq, dir_):
+            if linha in no_meio:
+                linhas.append(f'<tr class="porque-linha"><td colspan="4">'
+                              f'{_bloco_porque(no_meio.pop(linha))}</td></tr>')
+        linhas.append(f"<tr>{_celulas(esq, 'antigo', arq)}{_celulas(dir_, 'novo', arq)}</tr>")
+    linhas = "".join(linhas)
     return (
         '<div class="rolagem"><table class="codigo">'
         '<colgroup><col class="num"><col><col class="num"><col></colgroup>'
@@ -568,9 +587,13 @@ def _secao_arquivo(arq, de_arquivo, de_trecho):
     for trecho in arq.trechos:
         contexto = f" · {esc(trecho.contexto)}" if trecho.contexto else ""
         partes.append(f'<div class="trecho"><p class="trecho-rotulo">{trecho.rotulo}{contexto}</p>')
-        if trecho in de_trecho:
-            partes.append(_bloco_porque(de_trecho[trecho]))
-        partes.append(_tabela(trecho, arq) + "</div>")
+        porques = de_trecho.get(trecho, [])
+        no_meio = {}
+        if len(porques) == 1:                   # um porquê só: acima da tabela
+            partes.append(_bloco_porque(porques[0][1]))
+        else:                                   # vários: cada um antes da sua linha
+            no_meio = dict(porques)
+        partes.append(_tabela(trecho, arq, no_meio) + "</div>")
     partes.append("</div></section>")
     return "".join(partes)
 

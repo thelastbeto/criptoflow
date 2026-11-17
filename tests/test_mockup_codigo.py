@@ -34,6 +34,20 @@ DIFF_ALTERADO = textwrap.dedent("""\
     """)
 
 
+DIFF_NOVO_LONGO = textwrap.dedent("""\
+    diff --git a/novo.py b/novo.py
+    new file mode 100644
+    --- /dev/null
+    +++ b/novo.py
+    @@ -0,0 +1,5 @@
+    +def a():
+    +    return 1
+    +
+    +def b():
+    +    return 2
+    """)
+
+
 def _linha(tipo, texto):
     return mc.Linha(tipo, texto, None, None)
 
@@ -157,9 +171,38 @@ class TestPorques(unittest.TestCase):
             {"arquivo": "app.py", "porque": "vale pro resto"},
         ]
         de_arquivo, de_trecho, avisos = mc.atribuir_porques(self.arquivos, itens)
-        self.assertEqual(de_trecho[self.arq.trechos[0]], "mudou o x")
+        self.assertEqual([p for _, p in de_trecho[self.arq.trechos[0]]], ["mudou o x"])
         self.assertEqual(de_arquivo[self.arq], "vale pro resto")
         self.assertEqual(avisos, [])
+
+    def test_varias_ancoras_no_mesmo_trecho_viram_passeio_comentado(self):
+        [novo] = mc.ler_diff(DIFF_NOVO_LONGO)
+        itens = [  # fora de ordem de propósito: o script ordena pela linha
+            {"arquivo": "novo.py", "ancora": "def b", "porque": "explica b"},
+            {"arquivo": "novo.py", "ancora": "def a", "porque": "explica a"},
+        ]
+        _, de_trecho, avisos = mc.atribuir_porques([novo], itens)
+        self.assertEqual([p for _, p in de_trecho[novo.trechos[0]]], ["explica a", "explica b"])
+        self.assertEqual(avisos, [])
+
+        mudanca = mc.Mudanca([novo], "aaa1111", "bbb2222", "main", "feat/x", [], "", None)
+        saida = mc.renderizar({"titulo": "T"}, mudanca, {}, de_trecho)
+        self.assertEqual(saida.count('class="porque-linha"'), 2)       # dentro da tabela...
+        self.assertLess(saida.index("explica a"), saida.index("def a"))  # ...logo antes da linha
+        self.assertLess(saida.index("def a"), saida.index("explica b"))
+        self.assertLess(saida.index("explica b"), saida.index("def b"))
+
+    def test_dois_porques_na_mesma_linha_e_erro(self):
+        itens = [
+            {"arquivo": "app.py", "ancora": "x = 10", "porque": "um"},
+            {"arquivo": "app.py", "ancora": "x = 1", "porque": "dois"},
+        ]
+        # "x = 1" casa com "x = 1" (removida) e "x = 10" (adicionada): ambígua, então é erro.
+        with self.assertRaisesRegex(mc.ErroMockup, "ambígua"):
+            mc.atribuir_porques(self.arquivos, itens)
+        itens[1]["ancora"] = "x = 10"
+        with self.assertRaisesRegex(mc.ErroMockup, "mesma linha"):
+            mc.atribuir_porques(self.arquivos, itens)
 
     def test_trecho_sem_porque_vira_aviso(self):
         itens = [{"arquivo": "app.py", "ancora": "b = 2", "porque": "novo b"}]
