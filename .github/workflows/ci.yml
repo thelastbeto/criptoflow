@@ -16,10 +16,13 @@ jobs:
           python-version: "3.11"
 
       - name: Instalar dependências
-        run: pip install dbt-duckdb requests boto3 pandas pyarrow
+        run: pip install dbt-duckdb requests boto3 pandas pyarrow Pygments==2.20.0 PyYAML==6.0.3 # Pygments/PyYAML: usados pelo scripts/mockup_codigo.py (mesmas versões do requirements.txt)
 
       - name: Checar sintaxe dos scripts Python
-        run: python -m py_compile bronze.py produtor.py consumidor.py spark_job.py spark_streaming.py consultar.py dags/criptoflow_dag.py
+        run: python -m py_compile bronze.py produtor.py consumidor.py spark_job.py spark_streaming.py consultar.py dags/criptoflow_dag.py scripts/mockup_codigo.py
+
+      - name: Testes unitários
+        run: python -m unittest -v # Descobre tests/test_*.py (unittest da biblioteca padrão, sem dependência extra)
 
       - name: Validar o projeto dbt (parse)
         working-directory: criptoflow_dbt
